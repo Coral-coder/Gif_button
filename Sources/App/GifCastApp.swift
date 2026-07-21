@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
     let bluetooth: BluetoothManager
     let queue: SendQueue
     let search: SearchViewModel
+    let imports: ImportStore
 
     init() {
         let settings = AppSettings()
@@ -17,6 +18,7 @@ final class AppModel: ObservableObject {
         self.bluetooth = bluetooth
         self.queue = SendQueue(bluetooth: bluetooth, settings: settings)
         self.search = SearchViewModel()
+        self.imports = ImportStore()
     }
 }
 
@@ -40,6 +42,7 @@ struct GifCastApp: App {
                 .environmentObject(model.bluetooth)
                 .environmentObject(model.queue)
                 .environmentObject(model.search)
+                .environmentObject(model.imports)
         }
     }
 }

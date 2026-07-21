@@ -24,6 +24,10 @@ send. Nothing about your badge leaves your phone.
 | Send queue (offline, drains on connect, size-capped) | ✅ implemented |
 | Auto-connect to last badge | ✅ implemented |
 | Clear badge before sending (blank-frame) | ✅ implemented |
+| Infinite scroll (paginated Giphy/Tenor) | ✅ implemented |
+| Animated GIF preview before sending | ✅ implemented |
+| Queue button + app-wide upload popup | ✅ implemented |
+| Share-sheet import (Share Extension) | ✅ implemented — needs App Group signing (below) |
 
 The badge protocol was reverse-engineered from the stock APK. The full spec is in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md); it lives behind one file
@@ -41,6 +45,21 @@ open GifCast.xcodeproj
 
 Then in Xcode: select your team under **Signing & Capabilities**, plug in an
 iPhone (Bluetooth LE needs a real device — the simulator has no BLE), and Run.
+
+### Share extension setup (App Group)
+
+The Share Extension hands shared GIFs to the app through an **App Group**. Both
+targets ship an entitlement for `group.com.coralcoder.gifcast`. To sign:
+
+1. In Xcode, select the **GifCast** target → Signing & Capabilities → set your
+   team. Do the same for the **ShareExtension** target.
+2. On both targets, confirm the **App Groups** capability lists the same group
+   id. If your team can't use `group.com.coralcoder.gifcast`, change it to your
+   own (e.g. `group.<your-bundle-prefix>.gifcast`) in **both** `.entitlements`
+   files and in `Shared/SharedInbox.swift` (`appGroup`).
+3. Build & run. "Send to GifCast" then appears in the iOS share sheet for GIFs,
+   images, and links. Shared items show up in the app's send screen the next
+   time it's opened/foregrounded.
 
 - iOS 16+, SwiftUI, zero third-party Swift dependencies.
 - Add your **Giphy** and **Tenor** API keys in the app's Settings tab (both are

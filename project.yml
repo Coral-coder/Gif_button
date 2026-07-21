@@ -1,13 +1,14 @@
 # XcodeGen project definition.
 #
-# This repo does NOT commit the .xcodeproj (it is machine-generated and noisy in
-# diffs). Instead, generate it on your Mac:
+# This repo does NOT commit the .xcodeproj (it is machine-generated). Generate it
+# on your Mac:
 #
 #   brew install xcodegen      # one time
 #   xcodegen generate          # creates GifCast.xcodeproj
 #   open GifCast.xcodeproj
 #
-# Then set your own signing team in Xcode (Signing & Capabilities) and run.
+# Then set your signing team in Xcode. The share extension needs an App Group —
+# see README ("Share extension setup").
 
 name: GifCast
 options:
@@ -21,7 +22,6 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    # Leave DEVELOPMENT_TEAM empty; set your signing team in Xcode.
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
 
@@ -31,11 +31,29 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      - path: Shared
+    dependencies:
+      - target: ShareExtension
     settings:
       base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/GifCast.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.gifcast
         TARGETED_DEVICE_FAMILY: "1" # iPhone
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: Shared
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.gifcast.Share
+        TARGETED_DEVICE_FAMILY: "1"

@@ -5,6 +5,7 @@ import UIKit
 struct DeviceView: View {
     @EnvironmentObject private var bluetooth: BluetoothManager
     @EnvironmentObject private var queue: SendQueue
+    @State private var showQueue = false
 
     var body: some View {
         NavigationStack {
@@ -38,36 +39,16 @@ struct DeviceView: View {
                     }
                 }
 
-                if !queue.jobs.isEmpty || queue.isDraining {
-                    Section("Queue (\(queue.jobs.count))") {
-                        if queue.isDraining {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(queue.currentLabel ?? "Sending…").font(.caption)
-                                ProgressView(value: bluetooth.uploadProgress)
-                            }
+                Section("Queue") {
+                    if queue.isDraining {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(queue.currentLabel ?? "Sending…").font(.caption)
+                            ProgressView(value: bluetooth.uploadProgress)
                         }
-                        ForEach(queue.jobs) { job in
-                            HStack(spacing: 10) {
-                                if let preview = job.preview {
-                                    Image(uiImage: preview)
-                                        .resizable().scaledToFill()
-                                        .frame(width: 36, height: 36)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                } else {
-                                    Image(systemName: "photo")
-                                        .frame(width: 36, height: 36)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text(job.label).lineLimit(1)
-                                Spacer()
-                            }
-                        }
-                        .onDelete { offsets in
-                            offsets.map { queue.jobs[$0] }.forEach(queue.remove)
-                        }
-                        Button(role: .destructive) { queue.clear() } label: {
-                            Label("Clear queue", systemImage: "trash")
-                        }
+                    }
+                    Button { showQueue = true } label: {
+                        Label(queue.jobs.isEmpty ? "Show queue" : "Show queue (\(queue.jobs.count))",
+                              systemImage: "tray.full")
                     }
                 }
 
@@ -107,6 +88,7 @@ struct DeviceView: View {
                 }
             }
             .navigationTitle("Badge")
+            .sheet(isPresented: $showQueue) { QueueView() }
         }
     }
 

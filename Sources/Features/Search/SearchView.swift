@@ -5,9 +5,16 @@ import SwiftUI
 final class SearchViewModel: ObservableObject {
     @Published var query = ""
     @Published var results: [GifItem] = []
-    @Published var isLoading = false
+    @Published var isLoading = false        // first page
+    @Published var isLoadingMore = false    // subsequent pages
     @Published var errorMessage: String?
     @Published var source: GifSource = .giphy
+
+    private enum Mode: Equatable { case trending; case search(String) }
+    private var mode: Mode = .trending
+    private var cursor: String?
+    private var canLoadMore = true
+    private let pageSize = 30
 
     private func provider(_ settings: AppSettings) -> GifProvider {
         switch source {
@@ -16,37 +23,60 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    func loadTrending(_ settings: AppSettings) async {
-        await run { try await self.provider(settings).trending(limit: 30) }
-    }
-
-    func search(_ settings: AppSettings) async {
+    /// (Re)load the first page for the current query/source.
+    func reload(_ settings: AppSettings) async {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { await loadTrending(settings); return }
-        await run { try await self.provider(settings).search(query: q, limit: 30) }
+        mode = q.isEmpty ? .trending : .search(q)
+        cursor = nil
+        canLoadMore = true
+        results = []
+        errorMessage = nil
+        isLoading = true
+        await fetchPage(settings, isFirst: true)
+        isLoading = false
     }
 
-    private func run(_ work: @escaping () async throws -> [GifItem]) async {
-        isLoading = true
-        errorMessage = nil
+    /// Load the next page when the user nears the end of the grid.
+    func loadMoreIfNeeded(current item: GifItem, _ settings: AppSettings) async {
+        guard canLoadMore, !isLoading, !isLoadingMore else { return }
+        guard let idx = results.firstIndex(of: item), idx >= results.count - 8 else { return }
+        isLoadingMore = true
+        await fetchPage(settings, isFirst: false)
+        isLoadingMore = false
+    }
+
+    private func fetchPage(_ settings: AppSettings, isFirst: Bool) async {
         do {
-            results = try await work()
-            if results.isEmpty { errorMessage = "No results." }
+            let page: GifPage
+            switch mode {
+            case .trending:
+                page = try await provider(settings).trending(cursor: cursor, limit: pageSize)
+            case .search(let q):
+                page = try await provider(settings).search(query: q, cursor: cursor, limit: pageSize)
+            }
+            // Dedupe by id — providers occasionally repeat items across pages,
+            // and duplicate ForEach ids would break the grid.
+            let seen = Set(results.map(\.id))
+            results.append(contentsOf: page.items.filter { !seen.contains($0.id) })
+            cursor = page.nextCursor
+            canLoadMore = page.nextCursor != nil
+            if isFirst && results.isEmpty && errorMessage == nil { errorMessage = "No results." }
         } catch {
-            results = []
             errorMessage = error.localizedDescription
+            canLoadMore = false
         }
-        isLoading = false
     }
 }
 
 struct SearchView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var vm: SearchViewModel
+    @EnvironmentObject private var queue: SendQueue
 
     @State private var pending: PendingSend?
     @State private var photoItem: PhotosPickerItem?
     @State private var showURLPrompt = false
+    @State private var showQueue = false
     @State private var urlText = ""
 
     private let columns = [GridItem(.adaptive(minimum: 108), spacing: 8)]
@@ -83,23 +113,42 @@ struct SearchView: View {
                                     GifThumbnail(url: item.previewURL)
                                 }
                                 .buttonStyle(.plain)
+                                .task { await vm.loadMoreIfNeeded(current: item, settings) }
                             }
                         }
                         .padding(.horizontal, 8)
+
+                        if vm.isLoadingMore {
+                            ProgressView().padding(.vertical, 12)
+                        }
                     }
                     .overlay { if vm.isLoading { ProgressView() } }
                 }
             }
             .navigationTitle("Find a GIF")
             .searchable(text: $vm.query, prompt: "Search GIFs")
-            .onSubmit(of: .search) { Task { await vm.search(settings) } }
+            .onSubmit(of: .search) { Task { await vm.reload(settings) } }
             .task {
-                // Only load on first appearance / when empty, so switching tabs
-                // doesn't wipe your current results.
-                if vm.results.isEmpty { await vm.loadTrending(settings) }
+                // Load once on first appearance; don't wipe results on tab switch.
+                if vm.results.isEmpty { await vm.reload(settings) }
             }
-            .onChange(of: vm.source) { _ in Task { await vm.search(settings) } }
+            .onChange(of: vm.source) { _ in Task { await vm.reload(settings) } }
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { showQueue = true } label: {
+                        Image(systemName: (queue.jobs.isEmpty && !queue.isDraining) ? "tray" : "tray.full")
+                            .overlay(alignment: .topTrailing) {
+                                if !queue.jobs.isEmpty {
+                                    Text("\(queue.jobs.count)")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .padding(3)
+                                        .background(Circle().fill(.red))
+                                        .offset(x: 9, y: -9)
+                                }
+                            }
+                    }
+                }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     PhotosPicker(selection: $photoItem, matching: .images) {
                         Image(systemName: "photo.on.rectangle")
@@ -133,6 +182,7 @@ struct SearchView: View {
             .sheet(item: $pending) { item in
                 SendMediaView(pending: item)
             }
+            .sheet(isPresented: $showQueue) { QueueView() }
         }
     }
 

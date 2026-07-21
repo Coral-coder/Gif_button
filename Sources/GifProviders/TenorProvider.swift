@@ -11,16 +11,16 @@ struct TenorProvider: GifProvider {
         self.client = client
     }
 
-    func trending(limit: Int) async throws -> [GifItem] {
+    func trending(cursor: String?, limit: Int) async throws -> GifPage {
         // Tenor calls the trending feed "featured".
-        try await fetch(path: "featured", query: nil, limit: limit)
+        try await fetch(path: "featured", query: nil, cursor: cursor, limit: limit)
     }
 
-    func search(query: String, limit: Int) async throws -> [GifItem] {
-        try await fetch(path: "search", query: query, limit: limit)
+    func search(query: String, cursor: String?, limit: Int) async throws -> GifPage {
+        try await fetch(path: "search", query: query, cursor: cursor, limit: limit)
     }
 
-    private func fetch(path: String, query: String?, limit: Int) async throws -> [GifItem] {
+    private func fetch(path: String, query: String?, cursor: String?, limit: Int) async throws -> GifPage {
         guard !apiKey.isEmpty else { throw HTTPError.missingAPIKey("Tenor") }
         var components = URLComponents(string: "https://tenor.googleapis.com/v2/\(path)")!
         var items = [
@@ -29,9 +29,13 @@ struct TenorProvider: GifProvider {
             URLQueryItem(name: "media_filter", value: "gif,tinygif"),
         ]
         if let query { items.append(URLQueryItem(name: "q", value: query)) }
+        if let cursor, !cursor.isEmpty { items.append(URLQueryItem(name: "pos", value: cursor)) }
         components.queryItems = items
         let response = try await client.getJSON(TenorResponse.self, url: components.url!)
-        return response.results.compactMap { $0.asGifItem }
+        let gifs = response.results.compactMap { $0.asGifItem }
+        // Tenor returns "" (or omits) `next` when there are no more results.
+        let next = (response.next?.isEmpty == false) ? response.next : nil
+        return GifPage(items: gifs, nextCursor: gifs.isEmpty ? nil : next)
     }
 }
 
@@ -39,6 +43,7 @@ struct TenorProvider: GifProvider {
 
 private struct TenorResponse: Decodable {
     let results: [TenorResult]
+    let next: String?
 }
 
 private struct TenorResult: Decodable {

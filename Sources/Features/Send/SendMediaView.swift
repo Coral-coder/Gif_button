@@ -30,7 +30,7 @@ struct SendMediaView: View {
     @State private var statusText: String?
     @State private var isWorking = false
     @State private var sendAsAnimation = true
-    @State private var localData: Data?
+    @State private var previewData: Data?
     @State private var canAnimate = true
 
     var body: some View {
@@ -80,25 +80,38 @@ struct SendMediaView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
-            .onAppear(perform: analyzeLocal)
+            .task { await loadPreview() }
         }
     }
 
     @ViewBuilder private var preview: some View {
-        if let url = pending.previewURL {
-            GifThumbnail(url: url)
-        } else if let data = localData, let image = UIImage(data: data) {
-            Image(uiImage: image).resizable().scaledToFit()
+        if let data = previewData {
+            if Self.isGIF(data) {
+                AnimatedGIFView(data: data)
+            } else if let image = UIImage(data: data) {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                Color.gray.opacity(0.15).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+            }
         } else {
             Color.gray.opacity(0.15).overlay(ProgressView())
         }
     }
 
-    private func analyzeLocal() {
-        guard case .data(let data) = pending.source else { return }
-        localData = data
-        canAnimate = Self.isGIF(data)
-        sendAsAnimation = canAnimate
+    /// Load bytes for the animated preview: local data directly, or the small
+    /// preview URL for remote sources (the full-size GIF is fetched on send).
+    private func loadPreview() async {
+        guard previewData == nil else { return }
+        switch pending.source {
+        case .data(let data):
+            previewData = data
+        case .remote(let url):
+            previewData = try? await HTTPClient().data(from: pending.previewURL ?? url)
+        }
+        if let data = previewData {
+            canAnimate = Self.isGIF(data)
+            if !canAnimate { sendAsAnimation = false }
+        }
     }
 
     private func addToQueue() async {

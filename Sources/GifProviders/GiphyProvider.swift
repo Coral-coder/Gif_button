@@ -11,26 +11,34 @@ struct GiphyProvider: GifProvider {
         self.client = client
     }
 
-    func trending(limit: Int) async throws -> [GifItem] {
-        try await fetch(path: "trending", query: nil, limit: limit)
+    func trending(cursor: String?, limit: Int) async throws -> GifPage {
+        try await fetch(path: "trending", query: nil, cursor: cursor, limit: limit)
     }
 
-    func search(query: String, limit: Int) async throws -> [GifItem] {
-        try await fetch(path: "search", query: query, limit: limit)
+    func search(query: String, cursor: String?, limit: Int) async throws -> GifPage {
+        try await fetch(path: "search", query: query, cursor: cursor, limit: limit)
     }
 
-    private func fetch(path: String, query: String?, limit: Int) async throws -> [GifItem] {
+    private func fetch(path: String, query: String?, cursor: String?, limit: Int) async throws -> GifPage {
         guard !apiKey.isEmpty else { throw HTTPError.missingAPIKey("Giphy") }
+        let offset = Int(cursor ?? "") ?? 0
         var components = URLComponents(string: "https://api.giphy.com/v1/gifs/\(path)")!
         var items = [
             URLQueryItem(name: "api_key", value: apiKey),
             URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
             URLQueryItem(name: "rating", value: "pg-13"),
         ]
         if let query { items.append(URLQueryItem(name: "q", value: query)) }
         components.queryItems = items
         let response = try await client.getJSON(GiphyResponse.self, url: components.url!)
-        return response.data.compactMap { $0.asGifItem }
+        let gifs = response.data.compactMap { $0.asGifItem }
+
+        // Next cursor: advance the offset while more results remain.
+        let advanced = offset + (response.pagination?.count ?? gifs.count)
+        let total = response.pagination?.totalCount ?? 0
+        let next = (!gifs.isEmpty && advanced < total) ? String(advanced) : nil
+        return GifPage(items: gifs, nextCursor: next)
     }
 }
 
@@ -38,6 +46,19 @@ struct GiphyProvider: GifProvider {
 
 private struct GiphyResponse: Decodable {
     let data: [GiphyGif]
+    let pagination: GiphyPagination?
+}
+
+private struct GiphyPagination: Decodable {
+    let totalCount: Int?
+    let count: Int?
+    let offset: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case totalCount = "total_count"
+        case count
+        case offset
+    }
 }
 
 private struct GiphyGif: Decodable {
