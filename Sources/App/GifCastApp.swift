@@ -1,5 +1,27 @@
 import SwiftUI
 
+/// Owns the shared object graph so dependencies (queue needs Bluetooth +
+/// settings) can be wired at startup, then injected into the view tree. Held by
+/// a single @StateObject so nothing is recreated on tab switches.
+@MainActor
+final class AppModel: ObservableObject {
+    let settings: AppSettings
+    let bluetooth: BluetoothManager
+    let queue: SendQueue
+    let search: SearchViewModel
+    let marquee: MarqueeDraft
+
+    init() {
+        let settings = AppSettings()
+        let bluetooth = BluetoothManager(settings: settings)
+        self.settings = settings
+        self.bluetooth = bluetooth
+        self.queue = SendQueue(bluetooth: bluetooth, settings: settings)
+        self.search = SearchViewModel()
+        self.marquee = MarqueeDraft()
+    }
+}
+
 /// GifCast — a privacy-respecting replacement for the stock badge app.
 ///
 /// Design principles:
@@ -11,14 +33,16 @@ import SwiftUI
 ///   reverse-engineered details are easy to audit and adjust.
 @main
 struct GifCastApp: App {
-    @StateObject private var settings = AppSettings()
-    @StateObject private var bluetooth = BluetoothManager()
+    @StateObject private var model = AppModel()
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(settings)
-                .environmentObject(bluetooth)
+                .environmentObject(model.settings)
+                .environmentObject(model.bluetooth)
+                .environmentObject(model.queue)
+                .environmentObject(model.search)
+                .environmentObject(model.marquee)
         }
     }
 }

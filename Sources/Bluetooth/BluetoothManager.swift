@@ -27,8 +27,13 @@ enum ConnectionStatus: Equatable {
     case idle, connecting, connected, sending, disconnected
 }
 
-/// Owns the CoreBluetooth stack: scanning, connecting, GATT discovery, the
-/// device-id handshake, and streaming encoded packets to the badge.
+/// Owns the CoreBluetooth stack: scanning, (auto)connecting, GATT discovery,
+/// the device-id handshake, and streaming encoded packets to the badge via an
+/// async `transmit(_:)` the send queue can await one job at a time.
+///
+/// The central is created with `queue: .main`, so every delegate callback and
+/// published mutation happens on the main thread. `transmit(_:)` hops to the
+/// main actor so its setup runs there too.
 final class BluetoothManager: NSObject, ObservableObject {
     @Published private(set) var state: CBManagerState = .unknown
     @Published private(set) var discovered: [DiscoveredDevice] = []
@@ -36,11 +41,13 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published private(set) var services: [GATTService] = []
     @Published private(set) var status: ConnectionStatus = .idle
     @Published private(set) var freeSpaceKB: Int?
+    /// True once we're connected AND the write characteristic is discovered.
+    @Published private(set) var isReady = false
     @Published var isScanning = false
     @Published var lastMessage: String?
-    /// 0…1 while an upload is in progress.
     @Published private(set) var uploadProgress: Double = 0
 
+    private let settings: AppSettings
     private let descriptor = BadgeDescriptor.eGoods
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -48,16 +55,23 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var writeType: CBCharacteristicWriteType = .withResponse
     private var notifyChar: CBCharacteristic?
     private var didVerify = false
+    private var pendingVerify: Any?
+    private var autoConnectTarget: UUID?
+    private var suppressAutoConnect = false
 
     private var outgoing: [Data] = []
     private var sentCount = 0
+    private var sendContinuation: CheckedContinuation<Void, Error>?
 
-    override init() {
+    private let lastDeviceKey = "lastDeviceID"
+
+    init(settings: AppSettings) {
+        self.settings = settings
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
     }
 
-    var isConnected: Bool { peripheral?.state == .connected && writeChar != nil }
+    var isConnected: Bool { isReady && peripheral?.state == .connected }
 
     // MARK: - Scanning
 
@@ -83,83 +97,120 @@ final class BluetoothManager: NSObject, ObservableObject {
         stopScan()
         status = .connecting
         didVerify = false
+        suppressAutoConnect = false
         peripheral = device.peripheral
         device.peripheral.delegate = self
+        UserDefaults.standard.set(device.peripheral.identifier.uuidString, forKey: lastDeviceKey)
         central.connect(device.peripheral, options: nil)
     }
 
     func disconnect() {
+        autoConnectTarget = nil
+        suppressAutoConnect = true // don't immediately reconnect on an intentional disconnect
         guard let peripheral else { return }
         central.cancelPeripheralConnection(peripheral)
     }
 
-    // MARK: - Public send API
-
-    func sendStillImage(_ image: EncodedImage) throws {
-        try enqueue(EGoodsProtocol.packStillImage(image))
+    /// Forget the saved device so we stop auto-reconnecting to it.
+    func forgetDevice() {
+        UserDefaults.standard.removeObject(forKey: lastDeviceKey)
+        autoConnectTarget = nil
     }
 
-    func sendAnimation(_ animation: EncodedAnimation, name: String = "gif") throws {
-        guard !animation.frames.isEmpty else { throw BadgeError.emptyAnimation }
-        try enqueue(EGoodsProtocol.packAnimation(animation, name: name))
-    }
+    private func attemptAutoConnect() {
+        guard settings.autoConnect, !isConnected, status != .connecting,
+              let idString = UserDefaults.standard.string(forKey: lastDeviceKey),
+              let uuid = UUID(uuidString: idString) else { return }
 
-    func sendMarquee(container: [UInt8], width: Int, height: Int, display: Int, number: Int) throws {
-        var packets: [Data] = []
-        if let info = EGoodsProtocol.marqueeInfo(width: width, height: height, display: display, number: number) {
-            packets.append(info)
+        // Fast path: retrieve the known peripheral and connect directly.
+        if let known = central.retrievePeripherals(withIdentifiers: [uuid]).first {
+            let device = DiscoveredDevice(peripheral: known,
+                                          name: known.name ?? descriptor.displayName,
+                                          rssi: 0, isBadge: true)
+            connect(device)
+            return
         }
-        packets.append(contentsOf: EGoodsProtocol.marqueeData(container: container))
-        try enqueue(packets)
+        // Fallback: scan and connect when the saved device appears.
+        autoConnectTarget = uuid
+        startScan()
     }
 
-    private func enqueue(_ packets: [Data]) throws {
-        guard let peripheral, let writeChar, peripheral.state == .connected else {
-            throw BadgeError.notConnected
+    // MARK: - Transmit (async, one job at a time)
+
+    func transmit(_ packets: [Data]) async throws {
+        // Run setup on the main actor so `@Published` mutations and the write
+        // pump stay on the main thread (where the CB delegate also runs).
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            Task { @MainActor in
+                guard self.isConnected, let peripheral = self.peripheral, let writeChar = self.writeChar else {
+                    cont.resume(throwing: BadgeError.notConnected); return
+                }
+                guard self.sendContinuation == nil, self.status != .sending else {
+                    cont.resume(throwing: BadgeError.busy); return
+                }
+                self.outgoing = packets
+                self.sentCount = 0
+                self.uploadProgress = 0
+                self.status = .sending
+                self.sendContinuation = cont
+                self.pump(peripheral, writeChar)
+            }
         }
-        outgoing = packets
-        sentCount = 0
-        uploadProgress = 0
-        status = .sending
-        pump(peripheral, writeChar)
     }
 
-    /// Drive the upload queue. Write-with-response waits for each `didWrite`;
-    /// write-without-response pumps as fast as `canSendWriteWithoutResponse`
-    /// allows and resumes from `peripheralIsReady(toSendWriteWithoutResponse:)`.
-    /// Without that gate the BLE buffer overflows and fragments are dropped.
+    /// Drive the queue. Write-with-response waits for each `didWrite`;
+    /// write-without-response pumps only while `canSendWriteWithoutResponse`
+    /// allows and resumes from `peripheralIsReady(...)`. Without that gate the
+    /// controller buffer overflows and fragments are silently dropped.
     private func pump(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
         if writeType == .withoutResponse {
             while !outgoing.isEmpty {
-                guard peripheral.canSendWriteWithoutResponse else { return } // resume later
-                let packet = outgoing.removeFirst()
-                peripheral.writeValue(packet, for: characteristic, type: .withoutResponse)
+                guard peripheral.canSendWriteWithoutResponse else { return }
+                peripheral.writeValue(outgoing.removeFirst(), for: characteristic, type: .withoutResponse)
                 bumpProgress()
             }
             finishSend()
         } else {
             guard !outgoing.isEmpty else { finishSend(); return }
-            let packet = outgoing.removeFirst()
-            peripheral.writeValue(packet, for: characteristic, type: .withResponse)
-            // Next write happens in didWriteValueFor.
+            peripheral.writeValue(outgoing.removeFirst(), for: characteristic, type: .withResponse)
+            // Next write in didWriteValueFor.
         }
     }
 
     private func bumpProgress() {
         sentCount += 1
-        let totalPlanned = sentCount + outgoing.count
-        uploadProgress = totalPlanned > 0 ? Double(sentCount) / Double(totalPlanned) : 0
+        let planned = sentCount + outgoing.count
+        uploadProgress = planned > 0 ? Double(sentCount) / Double(planned) : 0
     }
 
     private func finishSend() {
         status = .connected
         uploadProgress = 1
         lastMessage = "Sent."
+        let cont = sendContinuation
+        sendContinuation = nil
+        cont?.resume()
+        flushPendingVerify()
+    }
+
+    private func failSend(_ error: Error) {
+        outgoing.removeAll()
+        status = isConnected ? .connected : .disconnected
+        let cont = sendContinuation
+        sendContinuation = nil
+        cont?.resume(throwing: error)
     }
 
     private func sendControl(_ data: Data?) {
         guard let data, let peripheral, let writeChar, peripheral.state == .connected else { return }
         peripheral.writeValue(data, for: writeChar, type: writeType)
+    }
+
+    private func flushPendingVerify() {
+        guard !didVerify, let value = pendingVerify else { return }
+        pendingVerify = nil
+        sendControl(EGoodsProtocol.deviceIdVerification(ret: value))
+        didVerify = true
     }
 }
 
@@ -168,7 +219,12 @@ final class BluetoothManager: NSObject, ObservableObject {
 extension BluetoothManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         state = central.state
-        if central.state != .poweredOn { isScanning = false }
+        if central.state == .poweredOn {
+            attemptAutoConnect()
+        } else {
+            isScanning = false
+            isReady = false
+        }
     }
 
     func centralManager(_ central: CBCentralManager,
@@ -184,8 +240,13 @@ extension BluetoothManager: CBCentralManagerDelegate {
         } else {
             discovered.append(device)
         }
-        // Show badges first, then by signal strength.
         discovered.sort { ($0.isBadge ? 1 : 0, $0.rssi) > ($1.isBadge ? 1 : 0, $1.rssi) }
+
+        // Auto-connect when the saved device shows up.
+        if let target = autoConnectTarget, peripheral.identifier == target {
+            autoConnectTarget = nil
+            connect(device)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -194,12 +255,14 @@ extension BluetoothManager: CBCentralManagerDelegate {
         services = []
         writeChar = nil
         notifyChar = nil
-        peripheral.discoverServices(nil) // discover all (also useful for RE)
+        isReady = false
+        peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager,
                         didFailToConnect peripheral: CBPeripheral, error: Error?) {
         status = .disconnected
+        isReady = false
         lastMessage = "Couldn't connect: \(error?.localizedDescription ?? "unknown error")."
     }
 
@@ -210,7 +273,15 @@ extension BluetoothManager: CBCentralManagerDelegate {
         writeChar = nil
         notifyChar = nil
         didVerify = false
+        pendingVerify = nil
+        isReady = false
         services = []
+        if sendContinuation != nil { failSend(BadgeError.notConnected) }
+        if suppressAutoConnect {
+            suppressAutoConnect = false
+        } else {
+            attemptAutoConnect()
+        }
     }
 }
 
@@ -237,12 +308,8 @@ extension BluetoothManager: CBPeripheralDelegate {
             services.append(record)
         }
 
-        // Choose characteristics by PROPERTY, not by UUID — a characteristic's
-        // role (write vs notify) is defined by its properties. The stock app
-        // does the same within the badge's service. We prefer the badge service
-        // (000001C0) as authoritative, but fall back to any service so the app
-        // still works if the layout differs. Prefer write-with-response, then
-        // write-without-response.
+        // Choose characteristics by PROPERTY, not UUID — a characteristic's role
+        // is defined by its properties. Prefer the badge's own service, then any.
         func pickWrite(_ list: [CBCharacteristic]) -> CBCharacteristic? {
             list.first { $0.properties.contains(.write) }
                 ?? list.first { $0.properties.contains(.writeWithoutResponse) }
@@ -253,39 +320,41 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         if service.uuid == descriptor.serviceUUID {
-            // Authoritative selection from the badge's own service.
             if let w = pickWrite(chars) { writeChar = w }
             if let n = pickNotify(chars) { notifyChar = n }
         } else {
-            // Fallback only if the badge service hasn't provided them yet.
             if writeChar == nil { writeChar = pickWrite(chars) }
             if notifyChar == nil { notifyChar = pickNotify(chars) }
         }
 
         if let writeChar {
             writeType = writeChar.properties.contains(.write) ? .withResponse : .withoutResponse
+            isReady = true
+            lastMessage = "Ready."
         }
         if let notifyChar {
             peripheral.setNotifyValue(true, for: notifyChar)
-        }
-        if writeChar != nil {
-            lastMessage = "Ready."
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard let data = characteristic.value else { return }
-        guard let json = EGoodsProtocol.extractStatusJSON(data) else { return }
+        guard let data = characteristic.value,
+              let json = EGoodsProtocol.extractStatusJSON(data) else { return }
 
         if let space = json["freespace"] as? Int { freeSpaceKB = space }
 
-        // Device-id handshake: the badge sends an `ADD` challenge; the stock app
-        // echoes it back in a type-14 verification. Do the same, once.
+        // Device-id handshake: echo the badge's `ADD` challenge back once. Never
+        // inject a control write mid-upload (it would corrupt the fragment
+        // stream) — defer it until the current transmit finishes.
         if !didVerify, let add = json["ADD"], !(add is NSNull) {
             if let addArray = add as? [Any], addArray.isEmpty { return }
-            sendControl(EGoodsProtocol.deviceIdVerification(ret: add))
-            didVerify = true
+            if status == .sending {
+                pendingVerify = add
+            } else {
+                sendControl(EGoodsProtocol.deviceIdVerification(ret: add))
+                didVerify = true
+            }
         }
     }
 
@@ -293,12 +362,9 @@ extension BluetoothManager: CBPeripheralDelegate {
                     didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
             lastMessage = "Write failed: \(error.localizedDescription)"
-            status = .connected
-            outgoing.removeAll()
+            failSend(error)
             return
         }
-        // Advance the queue for write-with-response uploads (write-without-
-        // response is driven by canSend / peripheralIsReady instead).
         guard status == .sending, writeType == .withResponse else { return }
         bumpProgress()
         pump(peripheral, characteristic)

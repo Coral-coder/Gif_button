@@ -23,6 +23,9 @@ send. Nothing about your badge leaves your phone.
 | Text marquee (scrolling mode) | ⚠️ wired, `display`/`number` params need hardware verification |
 | Photo-library picker | ✅ implemented |
 | Paste-a-URL | ✅ implemented |
+| Send queue (offline, drains on connect, size-capped) | ✅ implemented |
+| Auto-connect to last badge | ✅ implemented |
+| Clear badge before sending (blank-frame) | ✅ implemented |
 
 The badge protocol was reverse-engineered from the stock APK. The full spec is in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md); it lives behind one file

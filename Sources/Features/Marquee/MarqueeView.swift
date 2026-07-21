@@ -19,6 +19,7 @@ final class MarqueeDraft: ObservableObject {
 struct MarqueeView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var bluetooth: BluetoothManager
+    @EnvironmentObject private var queue: SendQueue
     @EnvironmentObject private var draft: MarqueeDraft
 
     @State private var statusText: String?
@@ -50,9 +51,9 @@ struct MarqueeView: View {
 
                 if !bluetooth.isConnected {
                     Section {
-                        Label("No badge connected — open the Badge tab first.",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.footnote).foregroundStyle(.orange)
+                        Label("Badge not connected — this will be queued and sent when it connects.",
+                              systemImage: "tray.and.arrow.down")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
 
@@ -64,11 +65,12 @@ struct MarqueeView: View {
                     Button {
                         Task { await send() }
                     } label: {
-                        Label("Send text to badge", systemImage: "paperplane.fill")
+                        Label(bluetooth.isConnected ? "Send text to badge" : "Add text to queue",
+                              systemImage: "paperplane.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isWorking || draft.text.trimmingCharacters(in: .whitespaces).isEmpty || !bluetooth.isConnected)
+                    .disabled(isWorking || draft.text.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .navigationTitle("Text")
@@ -93,24 +95,35 @@ struct MarqueeView: View {
         let mode = draft.mode
         do {
             statusText = "Encoding…"
-            let image = try await Task.detached(priority: .userInitiated) { () throws -> EncodedImage in
+            let built = try await Task.detached(priority: .userInitiated) { () throws -> (packets: [Data], thumb: Data?) in
                 let rendered = ImageEncoder.renderText(content, side: side, color: fg, background: bg)
-                return try ImageEncoder.encodeStill(rendered, side: side, quality: quality)
+                let image = try ImageEncoder.encodeStill(rendered, side: side, quality: quality)
+                let packets: [Data]
+                switch mode {
+                case .still:
+                    packets = EGoodsProtocol.packStillImage(image)
+                case .scroll:
+                    // Badge's dedicated marquee command. `display`/`number`
+                    // semantics are best-effort until verified on hardware.
+                    let container = EGoodsProtocol.animationContainer(
+                        frames: [image.jpeg], name: "text", frameDelayMs: 100,
+                        width: image.width, height: image.height)
+                    var p: [Data] = []
+                    if let info = EGoodsProtocol.marqueeInfo(width: image.width, height: image.height,
+                                                             display: 1, number: 1) {
+                        p.append(info)
+                    }
+                    p.append(contentsOf: EGoodsProtocol.marqueeData(container: container))
+                    packets = p
+                }
+                return (packets, image.jpeg)
             }.value
 
-            statusText = "Sending…"
-            switch mode {
-            case .still:
-                try bluetooth.sendStillImage(image)
-            case .scroll:
-                // Uses the badge's dedicated marquee command. `display`/`number`
-                // semantics are best-effort until verified on hardware.
-                let container = EGoodsProtocol.animationContainer(
-                    frames: [image.jpeg], name: "text", frameDelayMs: 100,
-                    width: image.width, height: image.height)
-                try bluetooth.sendMarquee(container: container, width: image.width,
-                                          height: image.height, display: 1, number: 1)
-            }
+            let preview = built.thumb.flatMap(UIImage.init(data:))
+            queue.enqueue(SendJob(label: content.isEmpty ? "Text" : content, preview: preview, packets: built.packets))
+            statusText = bluetooth.isConnected
+                ? "Sending…"
+                : "Added to queue — will send when the badge connects."
         } catch {
             statusText = error.localizedDescription
         }

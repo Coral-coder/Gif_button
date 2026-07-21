@@ -166,6 +166,17 @@ The badge sends JSON status frames on the notify characteristic. Observed keys:
   value back. `BluetoothManager` extracts the JSON by slicing between the first
   `{` and last `}`, which is robust to header framing.
 
+## No delete / clear command
+
+The `TYPE` table has **no delete, clear, erase, or format opcode**, and the
+stock app's "delete image" (the ✕ on a thumbnail) only edits its *own local
+list* (`userAppData` / `delUserImageIndex`) — it never sends anything to the
+badge. Each `ALBUM` (6) / `DYNAMIC_ATMOSPHERE` (5) upload sends a complete
+container that replaces the current content. So "clear the badge" is
+implemented by **uploading a black still frame** before writing new content.
+(If your badge turns out to *accumulate* rather than replace, this assumption
+needs revisiting on hardware.)
+
 ## Free-space guard
 
 Before uploading, the stock app compares `ceil(totalBytes / 1024)` against the

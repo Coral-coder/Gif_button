@@ -17,12 +17,14 @@ struct PendingSend: Identifiable {
 }
 
 /// Unified preview-and-send screen for every source (GIF search, photos, URL).
-/// Detects GIF vs still from the bytes and offers animation when possible.
+/// Detects GIF vs still from the bytes, encodes, and adds the result to the send
+/// queue (which delivers it to the badge now, or when it next connects).
 struct SendMediaView: View {
     let pending: PendingSend
 
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var bluetooth: BluetoothManager
+    @EnvironmentObject private var queue: SendQueue
     @Environment(\.dismiss) private var dismiss
 
     @State private var statusText: String?
@@ -48,14 +50,10 @@ struct SendMediaView: View {
                 }
 
                 if !bluetooth.isConnected {
-                    Label("No badge connected — open the Badge tab to connect.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.footnote).foregroundStyle(.orange)
+                    Label("Badge not connected — this will be queued and sent when it connects.",
+                          systemImage: "tray.and.arrow.down")
+                        .font(.footnote).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).padding(.horizontal)
-                }
-
-                if bluetooth.status == .sending {
-                    ProgressView(value: bluetooth.uploadProgress).padding(.horizontal)
                 }
 
                 if let statusText {
@@ -64,13 +62,14 @@ struct SendMediaView: View {
                 }
 
                 Button {
-                    Task { await send() }
+                    Task { await addToQueue() }
                 } label: {
-                    Label("Send to badge", systemImage: "paperplane.fill")
+                    Label(bluetooth.isConnected ? "Send to badge" : "Add to queue",
+                          systemImage: "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isWorking || !bluetooth.isConnected)
+                .disabled(isWorking)
                 .padding(.horizontal)
 
                 Spacer()
@@ -102,31 +101,39 @@ struct SendMediaView: View {
         sendAsAnimation = canAnimate
     }
 
-    private func send() async {
+    private func addToQueue() async {
         isWorking = true
         defer { isWorking = false }
         let side = settings.displaySide
         let quality = settings.jpegQuality
+        let label = pending.title
         do {
             statusText = "Preparing…"
             let data = try await resolveData()
             let animate = sendAsAnimation && Self.isGIF(data)
-            statusText = "Encoding…"
 
-            if animate {
-                let animation = try await Task.detached(priority: .userInitiated) {
-                    try ImageEncoder.encodeAnimation(fromGIFData: data, side: side, quality: quality)
-                }.value
-                statusText = "Sending \(animation.frames.count) frames…"
-                try bluetooth.sendAnimation(animation)
-            } else {
-                let image = try await Task.detached(priority: .userInitiated) { () throws -> EncodedImage in
+            let built = try await Task.detached(priority: .userInitiated) { () throws -> (packets: [Data], thumb: Data?) in
+                let packets: [Data]
+                if animate {
+                    let animation = try ImageEncoder.encodeAnimation(fromGIFData: data, side: side, quality: quality)
+                    packets = EGoodsProtocol.packAnimation(animation)
+                } else {
                     guard let ui = UIImage(data: data) else { throw BadgeError.encodingFailed }
-                    return try ImageEncoder.encodeStill(ui, side: side, quality: quality)
-                }.value
-                statusText = "Sending…"
-                try bluetooth.sendStillImage(image)
-            }
+                    let image = try ImageEncoder.encodeStill(ui, side: side, quality: quality)
+                    packets = EGoodsProtocol.packStillImage(image)
+                }
+                let thumb = ImageEncoder.thumbnail(from: data)?.jpegData(compressionQuality: 0.7)
+                return (packets, thumb)
+            }.value
+
+            let preview = built.thumb.flatMap(UIImage.init(data:))
+            queue.enqueue(SendJob(label: label, preview: preview, packets: built.packets))
+
+            statusText = bluetooth.isConnected
+                ? "Sending to badge…"
+                : "Added to queue — will send when the badge connects."
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            dismiss()
         } catch {
             statusText = error.localizedDescription
         }

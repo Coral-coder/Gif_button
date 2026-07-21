@@ -75,6 +75,37 @@ enum ImageEncoder {
         }
     }
 
+    // MARK: - Blank / solid frame (used to "clear" the badge)
+
+    static func solidColor(_ color: UIColor, side: Int) -> EncodedImage {
+        let size = CGSize(width: side, height: side)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            color.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+        }
+        let data = image.jpegData(compressionQuality: 0.9) ?? Data()
+        return EncodedImage(jpeg: data, width: side, height: side)
+    }
+
+    static func black(side: Int) -> EncodedImage { solidColor(.black, side: side) }
+
+    /// A small preview thumbnail (first frame for GIFs), for the queue UI.
+    static func thumbnail(from data: Data, maxSide: CGFloat = 240) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        return UIImage(cgImage: cg)
+    }
+
     // MARK: - Helpers
 
     static func jpeg(from image: UIImage, side: Int, quality: CGFloat) -> Data? {

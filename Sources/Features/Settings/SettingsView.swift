@@ -36,6 +36,17 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Auto-connect to last badge", isOn: $settings.autoConnect)
+                    Stepper("Queue size: \(settings.maxQueueSize)",
+                            value: $settings.maxQueueSize, in: 1...50)
+                    Toggle("Clear badge before sending", isOn: $settings.clearBeforeSend)
+                } header: {
+                    Text("Sending")
+                } footer: {
+                    Text("Queued items are sent one at a time when the badge is connected; the oldest are dropped past the queue size. \"Clear\" uploads a black frame first — the badge has no delete command, so this blanks whatever is showing before the queue is written.")
+                }
+
+                Section {
                     Label("No analytics, no ad SDKs, no third-party trackers.",
                           systemImage: "hand.raised.fill")
                     Text("The app only contacts the GIF service you search (Giphy or Tenor) and the CDN hosting a GIF you choose to send. Your badge is reached directly over Bluetooth — nothing about it is uploaded anywhere.")

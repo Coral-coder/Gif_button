@@ -47,6 +47,7 @@ enum BadgeError: LocalizedError {
     case notEnoughSpace
     case encodingFailed
     case emptyAnimation
+    case busy
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +55,7 @@ enum BadgeError: LocalizedError {
         case .notEnoughSpace: return "This is too large for the badge's free space."
         case .encodingFailed: return "Couldn't encode the image for the badge."
         case .emptyAnimation: return "There were no frames to send."
+        case .busy: return "A transfer is already in progress."
         }
     }
 }

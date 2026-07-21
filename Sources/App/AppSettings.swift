@@ -15,6 +15,15 @@ final class AppSettings: ObservableObject {
     /// JPEG compression quality (0…1) used when encoding frames for the badge.
     @Published var jpegQuality: Double { didSet { defaults.set(jpegQuality, forKey: Keys.quality) } }
 
+    /// Reconnect to the last-used badge automatically when Bluetooth is ready.
+    @Published var autoConnect: Bool { didSet { defaults.set(autoConnect, forKey: Keys.autoConnect) } }
+
+    /// Maximum number of items held in the send queue. Oldest are dropped first.
+    @Published var maxQueueSize: Int { didSet { defaults.set(maxQueueSize, forKey: Keys.maxQueue) } }
+
+    /// Blank the badge (upload a black frame) before draining the queue.
+    @Published var clearBeforeSend: Bool { didSet { defaults.set(clearBeforeSend, forKey: Keys.clearFirst) } }
+
     private let defaults: UserDefaults
 
     private enum Keys {
@@ -22,6 +31,9 @@ final class AppSettings: ObservableObject {
         static let tenor = "tenorAPIKey"
         static let side = "displaySide"
         static let quality = "jpegQuality"
+        static let autoConnect = "autoConnect"
+        static let maxQueue = "maxQueueSize"
+        static let clearFirst = "clearBeforeSend"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -33,5 +45,10 @@ final class AppSettings: ObservableObject {
         self.displaySide = side == 0 ? 368 : side
         let quality = defaults.double(forKey: Keys.quality)
         self.jpegQuality = quality == 0 ? 0.8 : quality
+        // Bool/Int defaults: use object(forKey:) so an unset key falls back sensibly.
+        self.autoConnect = (defaults.object(forKey: Keys.autoConnect) as? Bool) ?? true
+        let maxQ = defaults.integer(forKey: Keys.maxQueue)
+        self.maxQueueSize = maxQ == 0 ? 8 : maxQ
+        self.clearBeforeSend = (defaults.object(forKey: Keys.clearFirst) as? Bool) ?? false
     }
 }
