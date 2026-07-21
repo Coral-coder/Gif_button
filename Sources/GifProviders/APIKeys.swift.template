@@ -1,0 +1,14 @@
+// TEMPLATE — copy this file to `APIKeys.swift` (same folder) and paste your keys.
+//
+//   cp Sources/GifProviders/APIKeys.swift.template Sources/GifProviders/APIKeys.swift
+//
+// `APIKeys.swift` is gitignored so your keys stay out of the repo. A key entered
+// in the app's Settings overrides whatever is baked in here.
+
+import Foundation
+
+enum APIKeys {
+    static let giphy = ""   // https://developers.giphy.com
+    static let tenor = ""   // https://developers.google.com/tenor
+    static let klipy = ""   // https://klipy.com/developers
+}

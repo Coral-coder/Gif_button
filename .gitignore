@@ -23,3 +23,6 @@ GifCast.xcodeproj/
 *.apk
 *.ipa
 reverse-engineering/artifacts/
+
+# Baked-in API keys — keep secrets out of the repo (copy APIKeys.swift.template)
+Sources/GifProviders/APIKeys.swift
