@@ -232,20 +232,33 @@ extension BluetoothManager: CBPeripheralDelegate {
             services.append(record)
         }
 
-        // Prefer the badge's known write/notify characteristics; fall back to
-        // the first characteristic advertising the right property.
-        for c in chars {
-            if c.uuid == descriptor.writeUUID { writeChar = c }
-            if c.uuid == descriptor.notifyUUID { notifyChar = c }
+        // Choose characteristics by PROPERTY, not by UUID — a characteristic's
+        // role (write vs notify) is defined by its properties. The stock app
+        // does the same within the badge's service. We prefer the badge service
+        // (000001C0) as authoritative, but fall back to any service so the app
+        // still works if the layout differs. Prefer write-with-response, then
+        // write-without-response.
+        func pickWrite(_ list: [CBCharacteristic]) -> CBCharacteristic? {
+            list.first { $0.properties.contains(.write) }
+                ?? list.first { $0.properties.contains(.writeWithoutResponse) }
         }
-        if writeChar == nil {
-            writeChar = chars.first { $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse) }
+        func pickNotify(_ list: [CBCharacteristic]) -> CBCharacteristic? {
+            list.first { $0.properties.contains(.notify) }
+                ?? list.first { $0.properties.contains(.indicate) }
         }
+
+        if service.uuid == descriptor.serviceUUID {
+            // Authoritative selection from the badge's own service.
+            if let w = pickWrite(chars) { writeChar = w }
+            if let n = pickNotify(chars) { notifyChar = n }
+        } else {
+            // Fallback only if the badge service hasn't provided them yet.
+            if writeChar == nil { writeChar = pickWrite(chars) }
+            if notifyChar == nil { notifyChar = pickNotify(chars) }
+        }
+
         if let writeChar {
             writeType = writeChar.properties.contains(.write) ? .withResponse : .withoutResponse
-        }
-        if notifyChar == nil {
-            notifyChar = chars.first { $0.properties.contains(.notify) }
         }
         if let notifyChar {
             peripheral.setNotifyValue(true, for: notifyChar)
