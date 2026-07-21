@@ -25,6 +25,20 @@ struct SettingsView: View {
                     Link("Get a free Tenor key", destination: URL(string: "https://developers.google.com/tenor/guides/quickstart")!)
                 } header: {
                     Text("Tenor")
+                } footer: {
+                    Text("Note: Google is shutting down the Tenor API on June 30, 2026.")
+                }
+                .listRowBackground(GlassRow())
+
+                Section {
+                    SecureField("Klipy API key", text: $settings.klipyAPIKey)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                    Link("Get a free Klipy key", destination: URL(string: "https://klipy.com/developers")!)
+                } header: {
+                    Text("Klipy")
+                } footer: {
+                    Text("Free, Tenor-compatible GIF API. Leave blank to fall back to a baked-in key if one is set.")
                 }
                 .listRowBackground(GlassRow())
 

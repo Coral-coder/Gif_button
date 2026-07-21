@@ -18,8 +18,9 @@ final class SearchViewModel: ObservableObject {
 
     private func provider(_ settings: AppSettings) -> GifProvider {
         switch source {
-        case .tenor: return TenorProvider(apiKey: settings.tenorAPIKey)
-        default: return GiphyProvider(apiKey: settings.giphyAPIKey)
+        case .tenor: return TenorProvider(apiKey: settings.effectiveTenorKey)
+        case .klipy: return KlipyProvider(apiKey: settings.effectiveKlipyKey)
+        default: return GiphyProvider(apiKey: settings.effectiveGiphyKey)
         }
     }
 
@@ -87,6 +88,7 @@ struct SearchView: View {
                 Picker("Source", selection: $vm.source) {
                     Text("Giphy").tag(GifSource.giphy)
                     Text("Tenor").tag(GifSource.tenor)
+                    Text("Klipy").tag(GifSource.klipy)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)

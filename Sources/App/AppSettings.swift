@@ -7,6 +7,12 @@ import Foundation
 final class AppSettings: ObservableObject {
     @Published var giphyAPIKey: String { didSet { defaults.set(giphyAPIKey, forKey: Keys.giphy) } }
     @Published var tenorAPIKey: String { didSet { defaults.set(tenorAPIKey, forKey: Keys.tenor) } }
+    @Published var klipyAPIKey: String { didSet { defaults.set(klipyAPIKey, forKey: Keys.klipy) } }
+
+    /// A key typed in Settings overrides the baked-in default.
+    var effectiveGiphyKey: String { giphyAPIKey.isEmpty ? APIKeys.giphy : giphyAPIKey }
+    var effectiveTenorKey: String { tenorAPIKey.isEmpty ? APIKeys.tenor : tenorAPIKey }
+    var effectiveKlipyKey: String { klipyAPIKey.isEmpty ? APIKeys.klipy : klipyAPIKey }
 
     /// The badge's display resolution. The DZBJ "e-Goods" badge is 368×368; the
     /// stock app defaults to that. Adjust here if your model differs.
@@ -29,6 +35,7 @@ final class AppSettings: ObservableObject {
     private enum Keys {
         static let giphy = "giphyAPIKey"
         static let tenor = "tenorAPIKey"
+        static let klipy = "klipyAPIKey"
         static let side = "displaySide"
         static let quality = "jpegQuality"
         static let autoConnect = "autoConnect"
@@ -41,6 +48,7 @@ final class AppSettings: ObservableObject {
         // didSet is not triggered by assignments inside init, so no spurious writes.
         self.giphyAPIKey = defaults.string(forKey: Keys.giphy) ?? ""
         self.tenorAPIKey = defaults.string(forKey: Keys.tenor) ?? ""
+        self.klipyAPIKey = defaults.string(forKey: Keys.klipy) ?? ""
         let side = defaults.integer(forKey: Keys.side)
         self.displaySide = side == 0 ? 368 : side
         let quality = defaults.double(forKey: Keys.quality)

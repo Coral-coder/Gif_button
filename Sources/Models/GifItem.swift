@@ -16,6 +16,7 @@ struct GifItem: Identifiable, Hashable {
 enum GifSource: String, Hashable, CaseIterable {
     case giphy
     case tenor
+    case klipy
     case photoLibrary
     case url
 
@@ -23,6 +24,7 @@ enum GifSource: String, Hashable, CaseIterable {
         switch self {
         case .giphy: return "Giphy"
         case .tenor: return "Tenor"
+        case .klipy: return "Klipy"
         case .photoLibrary: return "Photos"
         case .url: return "Link"
         }
