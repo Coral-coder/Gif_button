@@ -125,6 +125,7 @@ struct SearchView: View {
                     .overlay { if vm.isLoading { ProgressView() } }
                 }
             }
+            .background(AeroBackground())
             .navigationTitle("Find a GIF")
             .searchable(text: $vm.query, prompt: "Search GIFs")
             .onSubmit(of: .search) { Task { await vm.reload(settings) } }

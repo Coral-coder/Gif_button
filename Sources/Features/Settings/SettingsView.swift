@@ -16,6 +16,7 @@ struct SettingsView: View {
                 } footer: {
                     Text("Create an app on Giphy's developer dashboard and paste its API key.")
                 }
+                .listRowBackground(GlassRow())
 
                 Section {
                     SecureField("Tenor API key", text: $settings.tenorAPIKey)
@@ -25,6 +26,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Tenor")
                 }
+                .listRowBackground(GlassRow())
 
                 Section("Badge display") {
                     Stepper("Resolution: \(settings.displaySide)×\(settings.displaySide)",
@@ -34,6 +36,7 @@ struct SettingsView: View {
                         Slider(value: $settings.jpegQuality, in: 0.3...1.0)
                     }
                 }
+                .listRowBackground(GlassRow())
 
                 Section {
                     Toggle("Auto-connect to last badge", isOn: $settings.autoConnect)
@@ -45,6 +48,7 @@ struct SettingsView: View {
                 } footer: {
                     Text("Queued items are sent one at a time when the badge is connected; the oldest are dropped past the queue size. \"Clear\" uploads a black frame first — the badge has no delete command, so this blanks whatever is showing before the queue is written.")
                 }
+                .listRowBackground(GlassRow())
 
                 Section {
                     Label("No analytics, no ad SDKs, no third-party trackers.",
@@ -54,12 +58,15 @@ struct SettingsView: View {
                 } header: {
                     Text("Privacy")
                 }
+                .listRowBackground(GlassRow())
 
                 Section {
                     LabeledContent("Version", value: "0.1.0")
                 }
+                .listRowBackground(GlassRow())
             }
             .navigationTitle("Settings")
+            .aeroScreen()
         }
     }
 }

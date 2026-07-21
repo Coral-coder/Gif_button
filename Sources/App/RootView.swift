@@ -2,9 +2,6 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var queue: SendQueue
-    @EnvironmentObject private var imports: ImportStore
-    @Environment(\.scenePhase) private var scenePhase
-
     @State private var showQueue = false
 
     var body: some View {
@@ -18,6 +15,7 @@ struct RootView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
+        .tint(.aeroBlue)
         // App-wide upload popup: visible on any tab while the queue drains.
         .overlay(alignment: .bottom) {
             if queue.isDraining {
@@ -28,23 +26,5 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: queue.isDraining)
         .sheet(isPresented: $showQueue) { QueueView() }
-        // Items shared into the app via the Share Extension.
-        .sheet(item: importBinding) { item in SendMediaView(pending: item) }
-        .onAppear { imports.ingest() }
-        .onChange(of: scenePhase) { phase in
-            if phase == .active { imports.ingest() }
-        }
-    }
-
-    /// Presents shared items one at a time; dismissing drops the current one.
-    private var importBinding: Binding<PendingSend?> {
-        Binding(
-            get: { imports.pending.first },
-            set: { newValue in
-                if newValue == nil && !imports.pending.isEmpty {
-                    imports.pending.removeFirst()
-                }
-            }
-        )
     }
 }

@@ -7,8 +7,7 @@
 #   xcodegen generate          # creates GifCast.xcodeproj
 #   open GifCast.xcodeproj
 #
-# Then set your signing team in Xcode. The share extension needs an App Group —
-# see README ("Share extension setup").
+# Then set your signing team in Xcode and run on a real iPhone.
 
 name: GifCast
 options:
@@ -31,31 +30,13 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-      - path: Shared
       - path: App/Assets.xcassets
-    dependencies:
-      - target: ShareExtension
     settings:
       base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: App/Info.plist
-        CODE_SIGN_ENTITLEMENTS: App/GifCast.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.gifcast
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1" # iPhone
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
-
-  ShareExtension:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ShareExtension
-      - path: Shared
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: ShareExtension/Info.plist
-        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
-        PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.gifcast.Share
-        TARGETED_DEVICE_FAMILY: "1"

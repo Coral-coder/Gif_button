@@ -18,6 +18,7 @@ struct QueueView: View {
                             ProgressView(value: bluetooth.uploadProgress)
                         }
                     }
+                    .listRowBackground(GlassRow())
                 }
 
                 if queue.jobs.isEmpty {
@@ -25,6 +26,7 @@ struct QueueView: View {
                         Text(queue.isDraining ? "Finishing up…" : "Queue is empty.")
                             .foregroundStyle(.secondary)
                     }
+                    .listRowBackground(GlassRow())
                 } else {
                     Section("Pending (\(queue.jobs.count))") {
                         ForEach(queue.jobs) { job in
@@ -47,6 +49,7 @@ struct QueueView: View {
                             offsets.map { queue.jobs[$0] }.forEach(queue.remove)
                         }
                     }
+                    .listRowBackground(GlassRow())
                 }
 
                 if !bluetooth.isConnected {
@@ -55,10 +58,12 @@ struct QueueView: View {
                               systemImage: "tray.and.arrow.down")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
+                    .listRowBackground(GlassRow())
                 }
             }
             .navigationTitle("Queue")
             .navigationBarTitleDisplayMode(.inline)
+            .aeroScreen()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .destructiveAction) {

@@ -1,6 +1,5 @@
 import CoreBluetooth
 import SwiftUI
-import UIKit
 
 struct DeviceView: View {
     @EnvironmentObject private var bluetooth: BluetoothManager
@@ -23,6 +22,7 @@ struct DeviceView: View {
                         Text(message).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .listRowBackground(GlassRow())
 
                 Section {
                     if bluetooth.isConnected {
@@ -38,6 +38,7 @@ struct DeviceView: View {
                         }
                     }
                 }
+                .listRowBackground(GlassRow())
 
                 Section("Queue") {
                     if queue.isDraining {
@@ -51,6 +52,7 @@ struct DeviceView: View {
                               systemImage: "tray.full")
                     }
                 }
+                .listRowBackground(GlassRow())
 
                 if !bluetooth.discovered.isEmpty && !bluetooth.isConnected {
                     Section("Devices") {
@@ -71,6 +73,7 @@ struct DeviceView: View {
                             }
                         }
                     }
+                    .listRowBackground(GlassRow())
                 }
 
                 if !bluetooth.services.isEmpty {
@@ -85,9 +88,11 @@ struct DeviceView: View {
                             }
                         }
                     }
+                    .listRowBackground(GlassRow())
                 }
             }
             .navigationTitle("Badge")
+            .aeroScreen()
             .sheet(isPresented: $showQueue) { QueueView() }
         }
     }

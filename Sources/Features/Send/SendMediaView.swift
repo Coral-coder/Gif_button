@@ -68,13 +68,14 @@ struct SendMediaView: View {
                           systemImage: "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AeroButtonStyle())
                 .disabled(isWorking)
                 .padding(.horizontal)
 
                 Spacer()
             }
             .padding(.top)
+            .background(AeroBackground())
             .navigationTitle("Send")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
