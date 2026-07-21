@@ -7,8 +7,8 @@ import SwiftUI
 ///   app ever talks to are the GIF services you explicitly search (Giphy/Tenor),
 ///   plus the CDN that hosts a GIF you choose to download. Everything else is
 ///   on-device or a direct Bluetooth link to your badge.
-/// - The Bluetooth protocol lives behind `BadgeProtocol` so the reverse-engineered
-///   details are isolated in one place (see `UnknownBadgeProtocol`).
+/// - The Bluetooth protocol is isolated in one place (`EGoodsProtocol`) so the
+///   reverse-engineered details are easy to audit and adjust.
 @main
 struct GifCastApp: App {
     @StateObject private var settings = AppSettings()

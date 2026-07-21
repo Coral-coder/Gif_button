@@ -20,12 +20,6 @@ struct BadgeDescriptor {
     )
 }
 
-/// A single BLE write.
-struct BadgePacket {
-    let data: Data
-    let writeType: CBCharacteristicWriteType
-}
-
 /// A still image already encoded as JPEG at the badge's native resolution.
 struct EncodedImage {
     let jpeg: Data

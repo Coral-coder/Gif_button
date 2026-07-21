@@ -21,7 +21,8 @@ send. Nothing about your badge leaves your phone.
 | Badge protocol (framing, still, animation) | ✅ transcribed from the stock app — **needs on-device confirmation** |
 | Text → badge (still) | ✅ implemented |
 | Text marquee (scrolling mode) | ⚠️ wired, `display`/`number` params need hardware verification |
-| Photo-library picker & paste-URL | ⏳ next |
+| Photo-library picker | ✅ implemented |
+| Paste-a-URL | ✅ implemented |
 
 The badge protocol was reverse-engineered from the stock APK. The full spec is in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md); it lives behind one file
@@ -65,7 +66,7 @@ Sources/
   GifProviders/             Giphy + Tenor
   Bluetooth/                Device descriptor, protocol encoder, CB manager
   Media/                    GIF/image/text → JPEG frames
-  Features/                 Search, Detail, Devices, Marquee, Settings screens
+  Features/                 Search, Send, Devices, Marquee, Settings screens
 docs/PROTOCOL.md            The reverse-engineered badge protocol
 PRIVACY.md                  What the app does and does not do with data
 ```

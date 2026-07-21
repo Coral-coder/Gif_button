@@ -45,6 +45,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var writeChar: CBCharacteristic?
+    private var writeType: CBCharacteristicWriteType = .withResponse
     private var notifyChar: CBCharacteristic?
     private var didVerify = false
 
@@ -131,14 +132,29 @@ final class BluetoothManager: NSObject, ObservableObject {
             return
         }
         let packet = outgoing.removeFirst()
-        // iOS negotiates the MTU automatically; write-with-response gives us
-        // natural flow control (the next write waits for didWrite).
-        peripheral.writeValue(packet, for: characteristic, type: .withResponse)
+        // iOS negotiates the MTU automatically. Write-with-response gives natural
+        // flow control (the next write waits for didWrite). If the badge only
+        // supports write-without-response, advance on the next runloop tick to
+        // avoid deep recursion over hundreds of fragments.
+        peripheral.writeValue(packet, for: characteristic, type: writeType)
+        if writeType == .withoutResponse {
+            DispatchQueue.main.async { [weak self] in
+                self?.advanceUpload(peripheral, characteristic)
+            }
+        }
+    }
+
+    private func advanceUpload(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
+        guard status == .sending else { return }
+        sentCount += 1
+        let totalPlanned = sentCount + outgoing.count
+        uploadProgress = totalPlanned > 0 ? Double(sentCount) / Double(totalPlanned) : 0
+        writeNext(peripheral, characteristic)
     }
 
     private func sendControl(_ data: Data?) {
         guard let data, let peripheral, let writeChar, peripheral.state == .connected else { return }
-        peripheral.writeValue(data, for: writeChar, type: .withResponse)
+        peripheral.writeValue(data, for: writeChar, type: writeType)
     }
 }
 
@@ -225,6 +241,9 @@ extension BluetoothManager: CBPeripheralDelegate {
         if writeChar == nil {
             writeChar = chars.first { $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse) }
         }
+        if let writeChar {
+            writeType = writeChar.properties.contains(.write) ? .withResponse : .withoutResponse
+        }
         if notifyChar == nil {
             notifyChar = chars.first { $0.properties.contains(.notify) }
         }
@@ -260,12 +279,10 @@ extension BluetoothManager: CBPeripheralDelegate {
             outgoing.removeAll()
             return
         }
-        // Only advance the upload queue for data writes (not control writes).
-        guard status == .sending else { return }
-        sentCount += 1
-        let totalPlanned = sentCount + outgoing.count
-        uploadProgress = totalPlanned > 0 ? Double(sentCount) / Double(totalPlanned) : 0
-        writeNext(peripheral, characteristic)
+        // Only advance the upload queue for write-with-response data writes
+        // (write-without-response advances itself in writeNext).
+        guard writeType == .withResponse else { return }
+        advanceUpload(peripheral, characteristic)
     }
 
     private static func describe(_ p: CBCharacteristicProperties) -> [String] {

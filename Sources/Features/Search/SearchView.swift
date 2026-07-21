@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 @MainActor
@@ -42,7 +43,11 @@ final class SearchViewModel: ObservableObject {
 struct SearchView: View {
     @EnvironmentObject private var settings: AppSettings
     @StateObject private var vm = SearchViewModel()
-    @State private var selected: GifItem?
+
+    @State private var pending: PendingSend?
+    @State private var photoItem: PhotosPickerItem?
+    @State private var showURLPrompt = false
+    @State private var urlText = ""
 
     private let columns = [GridItem(.adaptive(minimum: 108), spacing: 8)]
 
@@ -59,8 +64,10 @@ struct SearchView: View {
                 if let error = vm.errorMessage, vm.results.isEmpty {
                     Spacer()
                     VStack(spacing: 6) {
-                        Image(systemName: "photo.on.rectangle.angled").font(.largeTitle).foregroundStyle(.secondary)
-                        Text(error).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.largeTitle).foregroundStyle(.secondary)
+                        Text(error).font(.callout).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                     .padding()
                     Spacer()
@@ -68,7 +75,11 @@ struct SearchView: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(vm.results) { item in
-                                Button { selected = item } label: {
+                                Button {
+                                    pending = PendingSend(title: item.title,
+                                                          previewURL: item.previewURL,
+                                                          source: .remote(item.fullURL))
+                                } label: {
                                     GifThumbnail(url: item.previewURL)
                                 }
                                 .buttonStyle(.plain)
@@ -84,10 +95,49 @@ struct SearchView: View {
             .onSubmit(of: .search) { Task { await vm.search(settings) } }
             .task { await vm.loadTrending(settings) }
             .onChange(of: vm.source) { _ in Task { await vm.search(settings) } }
-            .sheet(item: $selected) { item in
-                GifDetailView(item: item)
+            .toolbar {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    PhotosPicker(selection: $photoItem, matching: .images) {
+                        Image(systemName: "photo.on.rectangle")
+                    }
+                    Button { showURLPrompt = true } label: { Image(systemName: "link") }
+                }
+            }
+            .onChange(of: photoItem) { newItem in
+                guard let newItem else { return }
+                Task {
+                    if let data = try? await newItem.loadTransferable(type: Data.self) {
+                        pending = PendingSend(title: "From Photos", previewURL: nil, source: .data(data))
+                    }
+                    photoItem = nil
+                }
+            }
+            .alert("Send from URL", isPresented: $showURLPrompt) {
+                TextField("https://…/image.gif", text: $urlText)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                Button("Cancel", role: .cancel) { urlText = "" }
+                Button("Load") {
+                    if let url = Self.normalizedURL(urlText) {
+                        pending = PendingSend(title: "From URL", previewURL: url, source: .remote(url))
+                    }
+                    urlText = ""
+                }
+            } message: {
+                Text("Paste a direct link to a GIF or image.")
+            }
+            .sheet(item: $pending) { item in
+                SendMediaView(pending: item)
             }
         }
+    }
+
+    private static func normalizedURL(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let url = URL(string: withScheme), url.host != nil else { return nil }
+        return url
     }
 }
 
