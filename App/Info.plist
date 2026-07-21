@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>GifCast</string>
+    <key>CFBundleName</key>
+    <string>GifCast</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <!-- Bluetooth: only ever used for the direct connection to your badge. -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>GifCast connects directly to your Bluetooth LED badge to send GIFs and text. Nothing is sent anywhere else.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>GifCast connects directly to your Bluetooth LED badge to send GIFs and text.</string>
+    <!-- Photos: only used when you pick a GIF/image to send. -->
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>GifCast lets you choose a GIF or image from your library to send to your badge.</string>
+</dict>
+</plist>

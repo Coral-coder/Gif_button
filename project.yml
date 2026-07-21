@@ -1,0 +1,40 @@
+# XcodeGen project definition.
+#
+# This repo does NOT commit the .xcodeproj (it is machine-generated and noisy in
+# diffs). Instead, generate it on your Mac:
+#
+#   brew install xcodegen      # one time
+#   xcodegen generate          # creates GifCast.xcodeproj
+#   open GifCast.xcodeproj
+#
+# Then set your own signing team in Xcode (Signing & Capabilities) and run.
+
+name: GifCast
+options:
+  bundleIdPrefix: com.coralcoder
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # Leave DEVELOPMENT_TEAM empty; set your signing team in Xcode.
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  GifCast:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        INFOPLIST_FILE: App/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.gifcast
+        TARGETED_DEVICE_FAMILY: "1" # iPhone
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
