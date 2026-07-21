@@ -32,6 +32,7 @@ targets:
     sources:
       - path: Sources
       - path: Shared
+      - path: App/Assets.xcassets
     dependencies:
       - target: ShareExtension
     settings:
@@ -40,6 +41,7 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/GifCast.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.coralcoder.gifcast
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1" # iPhone
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
