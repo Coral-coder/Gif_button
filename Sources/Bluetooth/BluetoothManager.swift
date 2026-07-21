@@ -121,35 +121,40 @@ final class BluetoothManager: NSObject, ObservableObject {
         sentCount = 0
         uploadProgress = 0
         status = .sending
-        writeNext(peripheral, writeChar)
+        pump(peripheral, writeChar)
     }
 
-    private func writeNext(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
-        guard !outgoing.isEmpty else {
-            status = .connected
-            uploadProgress = 1
-            lastMessage = "Sent."
-            return
-        }
-        let packet = outgoing.removeFirst()
-        // iOS negotiates the MTU automatically. Write-with-response gives natural
-        // flow control (the next write waits for didWrite). If the badge only
-        // supports write-without-response, advance on the next runloop tick to
-        // avoid deep recursion over hundreds of fragments.
-        peripheral.writeValue(packet, for: characteristic, type: writeType)
+    /// Drive the upload queue. Write-with-response waits for each `didWrite`;
+    /// write-without-response pumps as fast as `canSendWriteWithoutResponse`
+    /// allows and resumes from `peripheralIsReady(toSendWriteWithoutResponse:)`.
+    /// Without that gate the BLE buffer overflows and fragments are dropped.
+    private func pump(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
         if writeType == .withoutResponse {
-            DispatchQueue.main.async { [weak self] in
-                self?.advanceUpload(peripheral, characteristic)
+            while !outgoing.isEmpty {
+                guard peripheral.canSendWriteWithoutResponse else { return } // resume later
+                let packet = outgoing.removeFirst()
+                peripheral.writeValue(packet, for: characteristic, type: .withoutResponse)
+                bumpProgress()
             }
+            finishSend()
+        } else {
+            guard !outgoing.isEmpty else { finishSend(); return }
+            let packet = outgoing.removeFirst()
+            peripheral.writeValue(packet, for: characteristic, type: .withResponse)
+            // Next write happens in didWriteValueFor.
         }
     }
 
-    private func advanceUpload(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
-        guard status == .sending else { return }
+    private func bumpProgress() {
         sentCount += 1
         let totalPlanned = sentCount + outgoing.count
         uploadProgress = totalPlanned > 0 ? Double(sentCount) / Double(totalPlanned) : 0
-        writeNext(peripheral, characteristic)
+    }
+
+    private func finishSend() {
+        status = .connected
+        uploadProgress = 1
+        lastMessage = "Sent."
     }
 
     private func sendControl(_ data: Data?) {
@@ -292,10 +297,16 @@ extension BluetoothManager: CBPeripheralDelegate {
             outgoing.removeAll()
             return
         }
-        // Only advance the upload queue for write-with-response data writes
-        // (write-without-response advances itself in writeNext).
-        guard writeType == .withResponse else { return }
-        advanceUpload(peripheral, characteristic)
+        // Advance the queue for write-with-response uploads (write-without-
+        // response is driven by canSend / peripheralIsReady instead).
+        guard status == .sending, writeType == .withResponse else { return }
+        bumpProgress()
+        pump(peripheral, characteristic)
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        guard status == .sending, let writeChar else { return }
+        pump(peripheral, writeChar)
     }
 
     private static func describe(_ p: CBCharacteristicProperties) -> [String] {

@@ -1,39 +1,44 @@
 import SwiftUI
 import UIKit
 
+enum MarqueeMode: String, CaseIterable, Identifiable {
+    case still = "Still"
+    case scroll = "Scroll"
+    var id: String { rawValue }
+}
+
+/// Editable state for the Text tab. Owned above the TabView so it survives tab
+/// switches.
+final class MarqueeDraft: ObservableObject {
+    @Published var text = ""
+    @Published var textColor = Color.white
+    @Published var background = Color.black
+    @Published var mode: MarqueeMode = .still
+}
+
 struct MarqueeView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var bluetooth: BluetoothManager
+    @EnvironmentObject private var draft: MarqueeDraft
 
-    @State private var text = ""
-    @State private var textColor = Color.white
-    @State private var background = Color.black
-    @State private var mode: Mode = .still
     @State private var statusText: String?
     @State private var isWorking = false
-
-    enum Mode: String, CaseIterable, Identifiable {
-        case still = "Still"
-        case scroll = "Scroll"
-        var id: String { rawValue }
-    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Text") {
-                    TextField("Type something…", text: $text, axis: .vertical)
+                    TextField("Type something…", text: $draft.text, axis: .vertical)
                         .lineLimit(1...3)
-                    ColorPicker("Text color", selection: $textColor, supportsOpacity: false)
-                    ColorPicker("Background", selection: $background, supportsOpacity: false)
-                    Picker("Mode", selection: $mode) {
-                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                    ColorPicker("Text color", selection: $draft.textColor, supportsOpacity: false)
+                    ColorPicker("Background", selection: $draft.background, supportsOpacity: false)
+                    Picker("Mode", selection: $draft.mode) {
+                        ForEach(MarqueeMode.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
                 }
 
                 Section {
-                    // Live preview of what gets rasterized to the badge.
                     Image(uiImage: preview)
                         .resizable().scaledToFit()
                         .frame(maxWidth: .infinity)
@@ -63,7 +68,7 @@ struct MarqueeView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isWorking || text.trimmingCharacters(in: .whitespaces).isEmpty || !bluetooth.isConnected)
+                    .disabled(isWorking || draft.text.trimmingCharacters(in: .whitespaces).isEmpty || !bluetooth.isConnected)
                 }
             }
             .navigationTitle("Text")
@@ -71,10 +76,10 @@ struct MarqueeView: View {
     }
 
     private var preview: UIImage {
-        ImageEncoder.renderText(text.isEmpty ? "Preview" : text,
+        ImageEncoder.renderText(draft.text.isEmpty ? "Preview" : draft.text,
                                 side: min(settings.displaySide, 368),
-                                color: UIColor(textColor),
-                                background: UIColor(background))
+                                color: UIColor(draft.textColor),
+                                background: UIColor(draft.background))
     }
 
     private func send() async {
@@ -82,9 +87,10 @@ struct MarqueeView: View {
         defer { isWorking = false }
         let side = settings.displaySide
         let quality = settings.jpegQuality
-        let content = text
-        let fg = UIColor(textColor)
-        let bg = UIColor(background)
+        let content = draft.text
+        let fg = UIColor(draft.textColor)
+        let bg = UIColor(draft.background)
+        let mode = draft.mode
         do {
             statusText = "Encoding…"
             let image = try await Task.detached(priority: .userInitiated) { () throws -> EncodedImage in

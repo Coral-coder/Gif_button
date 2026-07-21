@@ -42,7 +42,7 @@ final class SearchViewModel: ObservableObject {
 
 struct SearchView: View {
     @EnvironmentObject private var settings: AppSettings
-    @StateObject private var vm = SearchViewModel()
+    @EnvironmentObject private var vm: SearchViewModel
 
     @State private var pending: PendingSend?
     @State private var photoItem: PhotosPickerItem?
@@ -93,7 +93,11 @@ struct SearchView: View {
             .navigationTitle("Find a GIF")
             .searchable(text: $vm.query, prompt: "Search GIFs")
             .onSubmit(of: .search) { Task { await vm.search(settings) } }
-            .task { await vm.loadTrending(settings) }
+            .task {
+                // Only load on first appearance / when empty, so switching tabs
+                // doesn't wipe your current results.
+                if vm.results.isEmpty { await vm.loadTrending(settings) }
+            }
             .onChange(of: vm.source) { _ in Task { await vm.search(settings) } }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
