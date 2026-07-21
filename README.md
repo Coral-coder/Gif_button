@@ -19,8 +19,6 @@ send. Nothing about your badge leaves your phone.
 | GIF → badge pipeline (resize, JPEG, animation container) | ✅ implemented |
 | Bluetooth stack (scan, connect, GATT, notify, handshake) | ✅ implemented |
 | Badge protocol (framing, still, animation) | ✅ transcribed from the stock app — **needs on-device confirmation** |
-| Text → badge (still) | ✅ implemented |
-| Text marquee (scrolling mode) | ⚠️ wired, `display`/`number` params need hardware verification |
 | Photo-library picker | ✅ implemented |
 | Paste-a-URL | ✅ implemented |
 | Send queue (offline, drains on connect, size-capped) | ✅ implemented |
@@ -68,8 +66,8 @@ Sources/
   Networking/               Tiny async HTTP client
   GifProviders/             Giphy + Tenor
   Bluetooth/                Device descriptor, protocol encoder, CB manager
-  Media/                    GIF/image/text → JPEG frames
-  Features/                 Search, Send, Devices, Marquee, Settings screens
+  Media/                    GIF/image → JPEG frames
+  Features/                 Search, Send, Devices, Settings screens
 docs/PROTOCOL.md            The reverse-engineered badge protocol
 PRIVACY.md                  What the app does and does not do with data
 ```

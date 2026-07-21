@@ -6,9 +6,6 @@ struct RootView: View {
             SearchView()
                 .tabItem { Label("GIFs", systemImage: "magnifyingglass") }
 
-            MarqueeView()
-                .tabItem { Label("Text", systemImage: "textformat") }
-
             DeviceView()
                 .tabItem { Label("Badge", systemImage: "dot.radiowaves.left.and.right") }
 
