@@ -15,7 +15,7 @@ struct RootView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
-        .tint(.aeroBlue)
+        .tint(.aeroAccent)
         // App-wide upload popup: visible on any tab while the queue drains.
         .overlay(alignment: .bottom) {
             if queue.isDraining {
