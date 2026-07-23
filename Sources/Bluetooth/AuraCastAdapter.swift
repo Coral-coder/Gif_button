@@ -4,6 +4,13 @@ import Foundation
 /// Adapter for AuraCast-style badges (E87 / L8, Jieli BR23). Reverse-engineering
 /// credit: AuraCast (github.com/Manaiakalani/auracast, MIT © Felix Herbst).
 ///
+/// Confirmed via the ZRun app decompile: these badges use the **Jieli RCSP SDK**
+/// (com.jieli.jl_rcsp / jl_bt_ota) over service 0000AE00 (write AE01, notify
+/// AE02). Full support means porting the Jieli RCSP subset — auth handshake +
+/// windowed file transfer — which is a sizable effort and needs on-device
+/// testing. (ZRun also drives a second "Qix" badge family on service
+/// C2E6FD00 — a future third adapter.)
+///
 /// This is a **detection + framing scaffold**. The building blocks below
 /// (service/characteristics, FE framing, CRC-16/XMODEM, opcodes) are transcribed
 /// from AuraCast's PROTOCOL.md, but two pieces still need porting from their
