@@ -431,36 +431,55 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     /// Interactive Jieli (AE00) upload: push `bgBytes` as a custom dial background
     /// via the RCSP request/response sequence. Separate from `transmit` so the
-    /// one-shot DZBJ/BeamBox paths are untouched.
-    @MainActor
+    /// one-shot DZBJ/BeamBox paths are untouched. All state runs on the main queue
+    /// (where the CB delegate + uploader also run).
     func uploadJieliBytes(_ bgBytes: [UInt8]) async throws {
-        guard isConnected, let peripheral, let writeChar else { throw BadgeError.notConnected }
-        guard (adapter as? AuraCastAdapter)?.authenticated == true else {
-            throw BadgeError.badgeUnsupported("Jieli badge not authenticated yet — reconnect and retry")
-        }
-        guard jieliUploader == nil, status != .sending else { throw BadgeError.busy }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            DispatchQueue.main.async {
+                guard self.isConnected, let peripheral = self.peripheral, self.writeChar != nil else {
+                    cont.resume(throwing: BadgeError.notConnected); return
+                }
+                guard (self.adapter as? AuraCastAdapter)?.authenticated == true else {
+                    cont.resume(throwing: BadgeError.badgeUnsupported("Jieli badge not authenticated yet — reconnect and retry"))
+                    return
+                }
+                guard self.jieliUploader == nil, self.status != .sending else {
+                    cont.resume(throwing: BadgeError.busy); return
+                }
 
-        let wType = writeType
-        let maxWrite = peripheral.maximumWriteValueLength(for: wType)
-        let uploader = JieliUploader(
-            maxWrite: maxWrite,
-            send: { [weak self] data in
-                guard let self, let p = self.peripheral, let w = self.writeChar else { return }
-                p.writeValue(data, for: w, type: wType)
-            },
-            dlog: { [weak self] s in self?.dlog(s) })
-        jieliUploader = uploader
-        status = .sending
-        uploadProgress = 0
-        defer {
-            jieliUploader = nil
-            status = isConnected ? .connected : .disconnected
+                let wType = self.writeType
+                let maxWrite = peripheral.maximumWriteValueLength(for: wType)
+                self.status = .sending
+                self.uploadProgress = 0
+                self.dlog("TX Jieli custom-bg upload (\(bgBytes.count)B)")
+                var resumed = false
+
+                let uploader = JieliUploader(
+                    maxWrite: maxWrite,
+                    send: { [weak self] data in
+                        guard let self, let p = self.peripheral, let w = self.writeChar else { return }
+                        p.writeValue(data, for: w, type: wType)
+                    },
+                    dlog: { [weak self] s in self?.dlog(s) },
+                    onProgress: { [weak self] p in self?.uploadProgress = p },
+                    onFinish: { [weak self] result in
+                        guard let self else { return }
+                        self.jieliUploader = nil
+                        self.status = self.isConnected ? .connected : .disconnected
+                        switch result {
+                        case .success:
+                            self.uploadProgress = 1
+                            self.lastMessage = "Sent."
+                            if !resumed { resumed = true; cont.resume() }
+                        case .failure(let error):
+                            self.lastMessage = (error as? BadgeError)?.errorDescription ?? "Upload failed."
+                            if !resumed { resumed = true; cont.resume(throwing: error) }
+                        }
+                    })
+                self.jieliUploader = uploader
+                uploader.start(bgBytes: bgBytes)
+            }
         }
-        try await uploader.upload(bgBytes: bgBytes, progress: { [weak self] p in
-            self?.uploadProgress = p
-        })
-        uploadProgress = 1
-        lastMessage = "Sent."
     }
 
     private func failSend(_ error: Error) {
