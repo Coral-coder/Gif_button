@@ -1,9 +1,8 @@
 name: Analyze BeamBox
 
-# One-shot: download the BeamBox XAPK (com.guangshen.beambox) — the app that
-# ships with the 01F0/01F1/01F2 badge — decompile it, and DUMP its BLE protocol
-# classes into the build log so we can port a BeamBox adapter. Interop
-# reverse-engineering only; nothing decompiled is committed to the repo.
+# Decompile the BeamBox XAPK (com.guangshen.beambox) and dump ONLY the small
+# BLE-protocol packages into the log, so the output fits and can be read whole.
+# Interop reverse-engineering only; nothing decompiled is committed.
 on:
   workflow_dispatch:
   push:
@@ -20,52 +19,34 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
 
-      - name: Download XAPK
-        run: |
-          set -e
-          URL='https://data.winudf.com/XAPK/Y29tLmd1YW5nc2hlbi5iZWFtYm94XzIxX2UxMzMyODhh?_p=Y29tLmd1YW5nc2hlbi5iZWFtYm94&download_id=1876509444531939&filename=beambox_1.0.13_APKPure.xapk&full_size=65376244&is_hot=false&k=5622560b182fbbda46797f87ed86d9606a642b7a&package_name=com.guangshen.beambox&source=web&token=1784776826-ee738f626c-0-9481c5e1902775b763e60c30c1a14a82'
-          curl -sSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o bb.xapk "$URL"
-          echo "size: $(stat -c%s bb.xapk 2>/dev/null || echo 0)"; file bb.xapk
-
-      - name: Unpack
-        run: |
-          set -e
-          mkdir -p xapk && (cd xapk && unzip -oq ../bb.xapk || true)
-          APK=$(ls xapk/*.apk 2>/dev/null | grep -iE 'guangshen|beambox|base' | head -1 || ls xapk/*.apk 2>/dev/null | head -1)
-          echo "APK=$APK" >> "$GITHUB_ENV"
-          mkdir -p apk && (cd apk && unzip -oq "../$APK" || true)
-
-      - name: Decompile with jadx
+      - name: Download + unpack + decompile
         run: |
           set +e
+          URL='https://data.winudf.com/XAPK/Y29tLmd1YW5nc2hlbi5iZWFtYm94XzIxX2UxMzMyODhh?_p=Y29tLmd1YW5nc2hlbi5iZWFtYm94&download_id=1876509444531939&filename=beambox_1.0.13_APKPure.xapk&full_size=65376244&is_hot=false&k=5622560b182fbbda46797f87ed86d9606a642b7a&package_name=com.guangshen.beambox&source=web&token=1784776826-ee738f626c-0-9481c5e1902775b763e60c30c1a14a82'
+          curl -sSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o bb.xapk "$URL"
+          mkdir -p xapk && (cd xapk && unzip -oq ../bb.xapk)
+          APK=$(ls xapk/*.apk | grep -iE 'guangshen|beambox|base' | head -1 || ls xapk/*.apk | head -1)
+          echo "APK=$APK" >> "$GITHUB_ENV"
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx -d jadx-out --no-res "$APK" 2>/dev/null
-          echo "java files: $(find jadx-out -name '*.java' 2>/dev/null | wc -l)"
+          echo "java files: $(find jadx-out -name '*.java' | wc -l)"
 
-      - name: DUMP nn20 package (BLE protocol lives here)
+      - name: TREE of nn20 (with sizes)
         run: |
           set +e
-          echo "================= FILE TREE (com/example/nn20) ================="
-          find jadx-out/sources/com/example/nn20 -name '*.java' 2>/dev/null | sort
-          echo ""
-          echo "================= FULL SOURCE DUMP ================="
-          for f in $(find jadx-out/sources/com/example/nn20 -name '*.java' 2>/dev/null | sort); do
-            echo ""
-            echo "########################################################"
-            echo "### FILE: $f"
-            echo "########################################################"
-            cat "$f"
+          find jadx-out/sources/com/example/nn20 -name '*.java' -printf '%s\t%p\n' 2>/dev/null | sort -k2
+
+      - name: DUMP nn20/bleutils (protocol constants + framing)
+        run: |
+          set +e
+          for f in $(find jadx-out/sources/com/example/nn20/bleutils -name '*.java' 2>/dev/null | sort); do
+            echo "@@@@@ $f @@@@@"; cat "$f"
           done
 
-      - name: DUMP protocol/image helper classes (broad grep)
+      - name: DUMP nn20/manager (BLE manager + send logic)
         run: |
           set +e
-          echo "================= classes referencing 01F1 / packet / album / image build ================="
-          for f in $(grep -rliE "000001F1|writeCharacteristic|createAlbum|packData|sendImage|sendFrame|0x01|byteArrayOf|jpeg|IMB|drawBitmap.*byte" jadx-out/sources --include=*.java 2>/dev/null | grep -viE "androidx|/google/|/material/|/lottie/|/glide/|/bumptech/|/facebook/|firebase|/R\.java" | sort -u | head -30); do
-            echo ""
-            echo "########################################################"
-            echo "### FILE: $f"
-            echo "########################################################"
-            cat "$f"
+          for f in $(find jadx-out/sources/com/example/nn20/manager -name '*.java' 2>/dev/null | sort); do
+            echo "@@@@@ $f @@@@@"; cat "$f"
           done
