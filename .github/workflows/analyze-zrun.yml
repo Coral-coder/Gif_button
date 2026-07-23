@@ -25,17 +25,19 @@ jobs:
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
-      - name: DUMP RCSP parse package (frame build/parse)
+      - name: DUMP RCSP frame packer (references CRC16 + opcode/sn assembly)
         run: |
           set +e
-          find jadx-out/sources/com/jieli/jl_rcsp/parse -name '*.java' -printf '%s\t%p\n' 2>/dev/null | sort -k2
-          for f in $(find jadx-out/sources/com/jieli/jl_rcsp/parse -name '*.java' 2>/dev/null | sort); do
-            echo "@@@@@ $f @@@@@"; cat "$f"
+          echo "===== candidates that call CRC16 ====="
+          grep -rlniE "CryptoUtil\.CRC16|\.CRC16\(" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -viE "CryptoUtil.java" | sort -u
+          echo "===== dump them (first 200 lines each) ====="
+          for f in $(grep -rlniE "CryptoUtil\.CRC16|\.CRC16\(" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -viE "CryptoUtil.java" | sort -u | head -4); do
+            echo "@@@@@ $f @@@@@"; sed -n '1,200p' "$f"
           done
-      - name: DUMP param base + flash params
+      - name: DUMP DialActionParam + BasePacket/RcspPacket
         run: |
           set +e
-          for n in ParamBase ParameterBase CommandBuilder ExternalFlashIOCtrlParam CreateFlashFileParam WriteDataParam QueryWriteResultParam EnableCustomDialBgParam SetUsingDialParam GetFlashFreeSpaceParam ReadDataParam; do
+          for n in DialActionParam BasePacket RcspPacket CommandPacket ReceivePacket; do
             f=$(find jadx-out/sources/com/jieli/jl_rcsp -name "$n.java" 2>/dev/null | head -1)
-            [ -n "$f" ] && [ "$n" != "CommandBuilder" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
+            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
           done
