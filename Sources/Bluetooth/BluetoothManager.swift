@@ -110,9 +110,6 @@ final class BluetoothManager: NSObject, ObservableObject {
     /// Frame fragments queued for the Qix write characteristic (one logical frame
     /// is fragmented to the negotiated write length; the device reassembles them).
     private var qixFrags: [Data] = []
-    /// The N88's picture size, learned from its badge-info response (falls back to
-    /// a square default until then). Drives the dial image dimensions.
-    private var qixPictureSize: (w: Int, h: Int) = (240, 240)
 
     /// True when the connected badge uses an interactive request/response upload
     /// (Jieli or Qix) rather than the one-shot DZBJ/BeamBox stream.
@@ -121,8 +118,8 @@ final class BluetoothManager: NSObject, ObservableObject {
     var usesJieliUpload: Bool { adapter is AuraCastAdapter }
     /// True for the Qix (C2E6FD, N88) interactive dial-push path specifically.
     var usesQixUpload: Bool { adapter is QixAdapter }
-    /// Current N88 picture dimensions (for building the dial image).
-    var qixImageSize: (w: Int, h: Int) { qixPictureSize }
+    /// Current N88 picture dimensions (from its badge-info reply; 240² default).
+    var qixImageSize: (w: Int, h: Int) { QixProtocol.pictureSize ?? (240, 240) }
 
     private let lastDeviceKey = "lastDeviceID"
     private let knownDevicesKey = "knownBadgeIDs"

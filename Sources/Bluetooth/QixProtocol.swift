@@ -160,10 +160,41 @@ enum QixProtocol {
         }
     }
 
+    // MARK: - Badge info (the N88's own display / picture size)
+    //
+    // TX 0xC6 (REQ_BADGE_INFO){1} → RX 0xC7 payload:
+    //   [0]=1 flag, [1..2]=width, [3..4]=height, [5..6]=pictureWidth,
+    //   [7..8]=pictureHeigh (all LE-16), [9..12]=memory. We drive the dial image
+    //   at pictureWidth × pictureHeigh.
+    static let cmdReqBadgeInfo: UInt8 = 0xC6   // -58
+    static let cmdRepBadgeInfo: UInt8 = 0xC7   // -57
+
+    /// The N88's picture size, learned from its badge-info reply (nil until then).
+    static var pictureSize: (w: Int, h: Int)?
+
+    /// Command-frame request for the badge's info (config=false, hasResponse=true).
+    static func badgeInfoRequest() -> [UInt8] {
+        commandFrame(cmd: cmdReqBadgeInfo, data: [1], serial: 0, isConfig: false, hasResponse: true)
+    }
+
     // MARK: - Adapter entry points (transmission handled by QixUploader)
-    static func onConnect() -> [Data] { [] }
-    static func handleNotification(_ data: Data) -> BadgeNotificationResult { BadgeNotificationResult() }
-    static func reset() {}
+    static func onConnect() -> [Data] { [Data(badgeInfoRequest())] }
+
+    static func handleNotification(_ data: Data) -> BadgeNotificationResult {
+        let b = [UInt8](data)
+        // Full frame: [0x9E, check, flag, cmd, len_lo, len_hi, payload…]; cmd @[3].
+        if b.count > 6, b[3] == cmdRepBadgeInfo {
+            let p = Array(b[6...])
+            if p.count >= 7, p[0] == 1 {
+                let picW = Int(p[5]) | (Int(p[6]) << 8)
+                let picH = p.count >= 9 ? (Int(p[7]) | (Int(p[8]) << 8)) : picW
+                if picW > 0, picH > 0 { pictureSize = (picW, picH) }
+            }
+        }
+        return BadgeNotificationResult()
+    }
+
+    static func reset() { pictureSize = nil }
     static func encode(_ payload: BadgePayload) throws -> [Data] {
         throw BadgeError.badgeUnsupported("Qix badge (N88) — uses interactive upload")
     }

@@ -182,6 +182,45 @@ enum ImageEncoder {
         return out
     }
 
+    /// Aspect-fill a JPEG into a `width`×`height` RGB565 **big-endian** buffer for
+    /// the Qix (N88) dial image. Byte order matches the ZRun app's
+    /// `ImageCacheUtils` (`shortToByteArray` writes the high byte first); the pixel
+    /// packing is standard RGB565 `(R5<<11)|(G6<<5)|B5`.
+    static func rgb565BE(fromJPEG data: Data, width: Int, height: Int) -> [UInt8] {
+        guard let ui = UIImage(data: data) else { return [] }
+        return rgb565BE(ui, width: width, height: height)
+    }
+
+    static func rgb565BE(_ image: UIImage, width: Int, height: Int) -> [UInt8] {
+        let target = CGSize(width: width, height: height)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let filled = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            let aspect = max(target.width / image.size.width, target.height / image.size.height)
+            let drawSize = CGSize(width: image.size.width * aspect, height: image.size.height * aspect)
+            image.draw(in: CGRect(x: (target.width - drawSize.width) / 2,
+                                  y: (target.height - drawSize.height) / 2,
+                                  width: drawSize.width, height: drawSize.height))
+        }
+        guard let cg = filled.cgImage else { return [] }
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: &rgba, width: width, height: height, bitsPerComponent: 8,
+                                  bytesPerRow: width * 4, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var out = [UInt8](); out.reserveCapacity(width * height * 2)
+        var i = 0
+        while i < rgba.count {
+            let r = UInt16(rgba[i]), g = UInt16(rgba[i + 1]), b = UInt16(rgba[i + 2])
+            let v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+            out.append(UInt8((v >> 8) & 0xFF)); out.append(UInt8(v & 0xFF)) // big-endian
+            i += 4
+        }
+        return out
+    }
+
     // MARK: - Blank / solid frame (used to "clear" the badge)
 
     static func solidColor(_ color: UIColor, side: Int) -> EncodedImage {
