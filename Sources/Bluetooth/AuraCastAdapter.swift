@@ -62,23 +62,59 @@ final class AuraCastAdapter: BadgeAdapter {
         return (write, notify, .withoutResponse)
     }
 
+    // MARK: - Jieli RCSP auth handshake (ported + verified; see JieliAuth)
+
+    private enum AuthStep { case idle, awaitingResponse, awaitingChallenge, awaitingConfirm, authed }
+    private var authStep: AuthStep = .idle
+    private(set) var authenticated = false
+
     func onConnect() -> [Data] {
-        // TODO: begin the crypto handshake (raw, non-FE-framed bytes on AE01).
-        []
+        authenticated = false
+        authStep = .awaitingResponse
+        // Kick off the handshake: TX [0x00, rand×16] (raw on AE01).
+        return [Data(JieliAuth.randomAuthData())]
     }
 
     func handleNotification(_ data: Data) -> BadgeNotificationResult {
-        // TODO: advance the handshake / handle 0x1D window acks.
-        BadgeNotificationResult()
+        var result = BadgeNotificationResult()
+        let b = [UInt8](data)
+        switch authStep {
+        case .awaitingResponse:
+            // Device replies [0x01, enc×16]; we answer [0x02,"pass"].
+            if b.count == 17, b[0] == 0x01 {
+                result.reply = [Data([0x02, 0x70, 0x61, 0x73, 0x73])]
+                authStep = .awaitingChallenge
+            }
+        case .awaitingChallenge:
+            // Device sends [0x00, challenge×16]; we return the encrypted response.
+            if b.count == 17, b[0] == 0x00 {
+                result.reply = [Data(JieliAuth.encryptedAuthData(b))]
+                authStep = .awaitingConfirm
+            }
+        case .awaitingConfirm:
+            // Device confirms [0x02,"pass"].
+            if b.count >= 5, b[0] == 0x02, b[1] == 0x70, b[2] == 0x61, b[3] == 0x73, b[4] == 0x73 {
+                authenticated = true
+                authStep = .authed
+            }
+        case .idle, .authed:
+            break
+        }
+        return result
     }
 
     func encode(_ payload: BadgePayload) throws -> [Data] {
-        // TODO: once the handshake + windowed transfer are ported, build:
-        //   resetAuth → deviceInfo → beginUpload → metadata → dataFrames(windowed) → complete → finalize
+        // Auth is implemented + verified. The remaining piece is the interactive
+        // windowed file transfer (MJPG AVI over FE frames, gated by 0x1D acks),
+        // which needs the manager's interactive-session support and on-device
+        // validation. See PROTOCOL notes.
         throw BadgeError.badgeUnsupported(displayName)
     }
 
-    func reset() {}
+    func reset() {
+        authenticated = false
+        authStep = .idle
+    }
 
     // MARK: - Framing building blocks (verified layout, ready for the transfer impl)
 
