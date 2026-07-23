@@ -45,6 +45,24 @@ protocol BadgeAdapter: AnyObject {
     func reset()
 }
 
+/// Shared transport tuning. The DZBJ/BeamBox protocols fragment their payload
+/// into data fields; the stock apps use 496 B, but that makes a ~505 B frame,
+/// which iOS silently drops if the negotiated ATT MTU is smaller (you can't
+/// request an MTU on iOS). The device reassembles fragments by concatenation, so
+/// using a smaller fragment is protocol-safe — it just means more packets. The
+/// BluetoothManager lowers this to fit the negotiated write length on connect.
+enum BadgeTransport {
+    /// Max payload (data field) per frame. Framing overhead is 9 bytes.
+    static var maxDataLen = 496
+    static let framingOverhead = 9
+    static let floor = 180
+
+    /// Clamp a peripheral's max write length into a safe data-field size.
+    static func dataLen(forMaxWrite maxWrite: Int) -> Int {
+        max(floor, min(496, maxWrite - framingOverhead))
+    }
+}
+
 // MARK: - Registry / detection
 
 enum BadgeRegistry {

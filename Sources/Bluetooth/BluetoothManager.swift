@@ -365,12 +365,19 @@ extension BluetoothManager: CBPeripheralDelegate {
         if let notifyChar {
             peripheral.setNotifyValue(true, for: notifyChar)
         }
-        if writeChar != nil, !isReady {
+        if let writeChar, !isReady {
+            // Size fragments to the negotiated MTU so large frames aren't dropped
+            // (iOS can't request an MTU; write-without-response silently truncates
+            // over-long writes). The badge reassembles fragments by concatenation,
+            // so a smaller fragment is protocol-safe.
+            let maxWrite = peripheral.maximumWriteValueLength(for: writeType)
+            BadgeTransport.maxDataLen = BadgeTransport.dataLen(forMaxWrite: maxWrite)
+            dlog("maxWrite=\(maxWrite)B → fragment payload=\(BadgeTransport.maxDataLen)B")
             isReady = true
             lastMessage = adapter.isSupported
                 ? "Ready."
                 : "\(adapter.displayName) detected — sending isn't supported yet."
-            dlog("ready: write=\(writeChar?.uuid.uuidString ?? "?") notify=\(notifyChar?.uuid.uuidString ?? "?") type=\(writeType == .withResponse ? "resp" : "noResp")")
+            dlog("ready: write=\(writeChar.uuid.uuidString) notify=\(notifyChar?.uuid.uuidString ?? "?") type=\(writeType == .withResponse ? "resp" : "noResp")")
             // Kick off the adapter's handshake, if any.
             let initPackets = adapter.onConnect()
             if !initPackets.isEmpty { dlog("TX onConnect \(initPackets.count) pkt(s)") }

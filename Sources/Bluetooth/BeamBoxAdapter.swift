@@ -123,7 +123,7 @@ enum BeamBoxProtocol {
 
     /// Split a full envelope into 496-byte data fields, subpage counting DOWN so
     /// the last fragment has index 0 (matches `t()`: `s10 = (total-1) - i`).
-    static func fragment(type: Command, data: [UInt8], size: Int = 496) -> [Data] {
+    static func fragment(type: Command, data: [UInt8], size: Int = BadgeTransport.maxDataLen) -> [Data] {
         if data.count <= size {
             return [frame(type: type.rawValue, payload: data)]
         }

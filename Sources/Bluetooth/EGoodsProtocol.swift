@@ -60,7 +60,7 @@ enum EGoodsProtocol {
     }
 
     /// Split a binary payload into fragments. The last fragment has index 0.
-    static func fragment(type: Command, data: [UInt8], size: Int = 496) -> [Data] {
+    static func fragment(type: Command, data: [UInt8], size: Int = BadgeTransport.maxDataLen) -> [Data] {
         if data.count <= size {
             return [frame(type: type.rawValue, payload: data)]
         }
