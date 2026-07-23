@@ -1,8 +1,8 @@
 name: Analyze ZRun
 
-# Decompile the ZRun XAPK (com.zijun.zrun) — the app that ships with the N88
-# badge — and dump the service-selection + image/dial upload path into the build
-# log. Interop reverse-engineering only; nothing decompiled is committed.
+# Decompile ZRun (com.zijun.zrun) and dump the REAL Jieli RCSP protocol classes
+# (framing/parser, external-flash + watch-face file transfer) that the N88 badge
+# uses. Interop reverse-engineering only; nothing decompiled is committed.
 on:
   workflow_dispatch:
   push:
@@ -24,7 +24,6 @@ jobs:
           set +e
           URL='https://data.winudf.com/XAPK/Y29tLnppanVuLnpydW5fMjAyNjA3MTQxNl9hYzY3NDIwMA?_p=Y29tLnppanVuLnpydW4%3D&download_id=1876509444531939&filename=ZRun_2.4.0_APKPure.xapk&full_size=89344935&is_hot=false&k=497d3ade37290e196b5c235b54770e3e6a641d28&package_name=com.zijun.zrun&source=web&token=1784773160-2328deaf1c-0-8c7826852cea2dd476bd414d75bc1ec5'
           curl -sSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o zrun.xapk "$URL"
-          echo "size: $(stat -c%s zrun.xapk 2>/dev/null || echo 0)"; file zrun.xapk
           mkdir -p xapk && (cd xapk && unzip -oq ../zrun.xapk)
           APK=$(ls xapk/*.apk | grep -iE 'zijun|zrun|base' | head -1 || ls xapk/*.apk | head -1)
           echo "APK=$APK" >> "$GITHUB_ENV"
@@ -33,28 +32,17 @@ jobs:
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
           echo "java files: $(find jadx-out -name '*.java' | wc -l)"
 
-      - name: Device model → protocol routing (N88 etc.)
+      - name: TREE jl_rcsp + jl_bt_ota (with sizes)
         run: |
           set +e
-          echo "===== model strings (N88 / device names) ====="
-          grep -rniE "\"N88\"|N88|X6|X7|E87|L8|BeamBox|deviceModel|productName|matchDevice|getProtocol|protocolType|SdkType|deviceType ==" jadx-out/sources --include=*.java 2>/dev/null \
-            | grep -viE "androidx|/google/|/material/|/lottie/|/glide/|firebase|/R\.java|import " | sort -u | head -80
+          echo "===== jl_rcsp tree ====="
+          find jadx-out/sources/com/jieli/jl_rcsp -name '*.java' -printf '%s\t%p\n' 2>/dev/null | sort -k2
+          echo "===== watch / dial / bigfile / externalflash files ====="
+          grep -rlniE "WatchFace|CustomWatch|BigFile|FatFile|LargeFile|ExternalFlash|FileTransfer|BumpFile|blockSize|packetSize" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | sort -u | head -60
 
-      - name: Service UUID selection sites
+      - name: DUMP RCSP framing / parser
         run: |
           set +e
-          echo "===== who references each candidate service ====="
-          for svc in "00003802" "00004a02" "C2E6FD" "0000ae0" "0000fd00"; do
-            echo "--- $svc ---"
-            grep -rliE "$svc" jadx-out/sources --include=*.java 2>/dev/null | grep -viE "androidx|/google/|firebase" | head -10
+          for f in $(grep -rlniE "0xFE|-2, |head|parseData|checkData|crc16|verify|packData|CommandBase|toParaData|toData\(" jadx-out/sources/com/jieli/jl_rcsp/parse jadx-out/sources/com/jieli/jl_rcsp/protocol jadx-out/sources/com/jieli/jl_rcsp/util 2>/dev/null | sort -u | head -8); do
+            echo "@@@@@ $f @@@@@"; cat "$f"
           done
-
-      - name: Image / dial / watchface upload path
-        run: |
-          set +e
-          echo "===== files that build image/dial payloads ====="
-          grep -rliE "sendImage|uploadImage|customDial|watchFace|dialData|pushDial|BitmapFactory|jpeg|drawBitmap|frameData|画屏|表盘|图片" jadx-out/sources --include=*.java 2>/dev/null \
-            | grep -viE "androidx|/google/|/material/|/lottie/|/glide/|firebase|/bumptech/" | sort -u | head -40
-          echo ""
-          echo "===== Qix library protocol (C2E6FD service badges) ====="
-          find jadx-out/sources/com/qix -name '*.java' 2>/dev/null | sort | head -60
