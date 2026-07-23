@@ -101,7 +101,9 @@ enum BadgeTransport {
 enum BadgeRegistry {
     /// Order matters: first service match wins.
     static func makeAdapters() -> [BadgeAdapter] {
-        [BeamBoxAdapter(), EGoodsAdapter(), AuraCastAdapter()]
+        // Qix before AuraCast: the N88 advertises both C2E6FD00 (Qix, its real
+        // protocol) and AE00 (Jieli, a dead end for it), so Qix must win.
+        [BeamBoxAdapter(), EGoodsAdapter(), QixAdapter(), AuraCastAdapter()]
     }
 
     /// Name prefixes that flag "this looks like a badge" while scanning.
