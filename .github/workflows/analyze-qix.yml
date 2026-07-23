@@ -25,35 +25,34 @@ jobs:
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
-      - name: ImageCacheUtils — RGB565 byte order (bitmap2RGB / zoomBitmap)
+      - name: TypeConversion + ImageCacheUtils byte order (short/int/bytes2Int)
         run: |
           set +e
-          f=$(find jadx-out/sources -path '*qix*ImageCacheUtils.java' | head -1)
+          f=$(find jadx-out/sources -path '*qix*TypeConversion.java' | head -1)
           echo "@@@@@ $f @@@@@"
-          [ -f "$f" ] && sed -n '/bitmap2RGB/,/^    }/p' "$f"
-          echo "--- any 565 / >> 8 / & 248 recoloring ---"
-          [ -f "$f" ] && grep -nE "248|252|0xF8|0xFC|>> 3|<< 3|<< 8|565|RGB_565|shr|shl" "$f" | head -30
-      - name: Picture-size response parse (COMMAND_REQ_PICTURE_SIZE = 0xDA)
+          for m in shortToByteArray bytes2Int bytes2Short intToBytes bytes2Chars; do
+            echo "--- $m ---"
+            [ -f "$f" ] && sed -n "/$m/,/^    }/p" "$f" | head -18
+          done
+          g=$(find jadx-out/sources -path '*qix*ImageCacheUtils.java' | head -1)
+          echo "@@@@@ $g (shortToByteArray if local) @@@@@"
+          [ -f "$g" ] && sed -n '/shortToByteArray/,/^    }/p' "$g" | head -18
+      - name: Badge-info request + response parse (0xC6/0xC7 -> pictureWidth/Heigh)
         run: |
           set +e
           f=$(find jadx-out/sources -path '*qix*ReceiveCommandParse.java' | head -1)
-          echo "@@@@@ $f @@@@@"
-          [ -f "$f" ] && grep -nE "REQ_PICTURE_SIZE|PictureSize|pictureSize|onPictureSize|width|height|getWidth|getHeight" "$f" | head -30
-          echo "--- parse body near picture size (opcode -38) ---"
-          [ -f "$f" ] && sed -n '/case -38/,/break/p' "$f" | head -40
-          echo "--- ReceiveCommandParse handler for -38 alt ---"
-          [ -f "$f" ] && grep -n "38" "$f" | head -20
-      - name: Where ThemeConfig / dial width+height come from
+          echo "@@@@@ badgeInfo parse @@@@@"
+          [ -f "$f" ] && sed -n '/BadgeInfoReturn/,/return/p' "$f" | head -60
+          echo "--- grep badge-info offsets ---"
+          [ -f "$f" ] && grep -nE "BadgeInfoReturn|setPictureWidth|setPictureHeigh|setWidth|setHeight|setMemory|REP_BADGE|REQ_BADGE" "$f" | head -30
+          c=$(find jadx-out/sources -path '*qix*BTCommandManager.java' | head -1)
+          echo "--- badge-info request cmd ---"
+          [ -f "$c" ] && grep -nE "BADGE_INFO|badgeInfo|BadgeInfo|REP_BADGE|REQ_BADGE" "$c" | head -10
+          [ -f "$c" ] && sed -n '/badgeInfo/,/^    }/p' "$c" | head -20
+      - name: How the badge picture size feeds the dial push (mo/ + Qix wrapper)
         run: |
           set +e
-          for f in $(grep -rlniE "class ThemeConfig|ThemeConfig\(" jadx-out/sources --include=*.java 2>/dev/null | head -3); do
-            echo "@@@@@ $f @@@@@"; grep -nE "width|height|Width|Height|512|360|240|466|454|patch|int " "$f" | head -30
-          done
-          echo "===== callers that set ThemeConfig width/height ====="
-          grep -rnE "ThemeConfig|setWidth|setHeight|getPictureSize|PictureSize" jadx-out/sources/mo --include=*.java 2>/dev/null | head -30
-      - name: PictureSize bean + listener callback
-        run: |
-          set +e
-          for f in $(grep -rlniE "onResponsePictureSize|PictureSizeReturn|class PictureSize|pictureWidth|pictureHeight" jadx-out/sources/com/qix --include=*.java 2>/dev/null | sort -u | head -4); do
-            echo "@@@@@ $f @@@@@"; sed -n '1,80p' "$f"
-          done
+          grep -rnE "getPictureWidth|getPictureHeigh|BadgeInfoReturn|onReturnBadgeInfo|pictureWidth|pictureHeigh|getDialWide|getDialHigh" jadx-out/sources/mo jadx-out/sources/qn --include=*.java 2>/dev/null | head -30
+          echo "--- IReceiveListener badge-info callback ---"
+          l=$(find jadx-out/sources -path '*qix*IReceiveListener.java' | head -1)
+          [ -f "$l" ] && grep -nE "Badge|Picture|badge|picture" "$l" | head -20
