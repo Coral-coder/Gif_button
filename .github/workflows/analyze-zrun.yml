@@ -25,19 +25,18 @@ jobs:
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
-      - name: DUMP RCSP frame packer (references CRC16 + opcode/sn assembly)
+      - name: DUMP RCSP byte serializer (head 0xFE + CRC placement)
         run: |
           set +e
-          echo "===== candidates that call CRC16 ====="
-          grep -rlniE "CryptoUtil\.CRC16|\.CRC16\(" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -viE "CryptoUtil.java" | sort -u
-          echo "===== dump them (first 200 lines each) ====="
-          for f in $(grep -rlniE "CryptoUtil\.CRC16|\.CRC16\(" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -viE "CryptoUtil.java" | sort -u | head -4); do
-            echo "@@@@@ $f @@@@@"; sed -n '1,200p' "$f"
+          echo "===== files with the 0xFE/-2 sync head in jl_rcsp ====="
+          grep -rlniE "\(byte\) *-2|0xFE|= *-2;|253" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | sort -u | head -20
+          echo "===== files that build packet bytes (paramLen + CRC) ====="
+          for f in $(grep -rlniE "getParamLen|setParamLen|opCodeSn" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | xargs grep -lE "CRC16|crc16|0xFE|\(byte\) *-2" 2>/dev/null | sort -u | head -4); do
+            echo "@@@@@ $f @@@@@"; sed -n '1,240p' "$f"
           done
-      - name: DUMP DialActionParam + BasePacket/RcspPacket
-        run: |
-          set +e
-          for n in DialActionParam BasePacket RcspPacket CommandPacket ReceivePacket; do
+          echo "===== RcspUtil / parse helper ====="
+          for n in RcspUtil ParseHelper CommandParseHelper RcspParseHelper; do
             f=$(find jadx-out/sources/com/jieli/jl_rcsp -name "$n.java" 2>/dev/null | head -1)
-            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
+            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; sed -n '1,240p' "$f"; }
           done
+          true
