@@ -9,6 +9,9 @@ struct RootView: View {
             SearchView()
                 .tabItem { Label("GIFs", systemImage: "magnifyingglass") }
 
+            CreateView()
+                .tabItem { Label("Create", systemImage: "wand.and.stars") }
+
             DeviceView()
                 .tabItem { Label("Badge", systemImage: "dot.radiowaves.left.and.right") }
 

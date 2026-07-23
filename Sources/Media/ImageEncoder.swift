@@ -1,4 +1,6 @@
 import CoreGraphics
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import ImageIO
 import UIKit
 
@@ -73,6 +75,70 @@ enum ImageEncoder {
             let rect = CGRect(x: 0, y: (size.height - bounds.height) / 2, width: size.width, height: bounds.height)
             (text as NSString).draw(in: rect, withAttributes: attrs)
         }
+    }
+
+    // MARK: - QR code → image
+
+    /// Render a QR code for `text` centered on a square badge image, with a quiet
+    /// margin. Returns a solid-background fallback if generation fails.
+    static func renderQR(_ text: String, side: Int,
+                         color: UIColor = .black, background: UIColor = .white) -> UIImage {
+        let size = CGSize(width: side, height: side)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            background.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            guard let qr = qrCGImage(text, color: color, background: background) else { return }
+            // Draw the QR at ~86% with a quiet-zone margin, pixel-crisp.
+            ctx.cgContext.interpolationQuality = .none
+            let inset = CGFloat(side) * 0.07
+            let rect = CGRect(x: inset, y: inset, width: CGFloat(side) - 2 * inset, height: CGFloat(side) - 2 * inset)
+            let ui = UIImage(cgImage: qr)
+            ui.draw(in: rect)
+        }
+    }
+
+    private static func qrCGImage(_ text: String, color: UIColor, background: UIColor) -> CGImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        // Recolor with false-color so the QR matches the requested palette.
+        let colored = output.applyingFilter("CIFalseColor", parameters: [
+            "inputColor0": CIColor(color: color),
+            "inputColor1": CIColor(color: background),
+        ])
+        let context = CIContext()
+        return context.createCGImage(colored, from: colored.extent)
+    }
+
+    // MARK: - Gradient → image
+
+    /// A diagonal two-color gradient sized for the badge.
+    static func renderGradient(from start: UIColor, to end: UIColor, side: Int) -> UIImage {
+        let size = CGSize(width: side, height: side)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            let cg = ctx.cgContext
+            let colors = [start.cgColor, end.cgColor] as CFArray
+            let space = CGColorSpaceCreateDeviceRGB()
+            guard let gradient = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1]) else {
+                start.setFill(); ctx.fill(CGRect(origin: .zero, size: size)); return
+            }
+            cg.drawLinearGradient(gradient,
+                                  start: .zero,
+                                  end: CGPoint(x: size.width, y: size.height),
+                                  options: [])
+        }
+    }
+
+    /// JPEG-encode an already-badge-sized UIImage (for the Create tab generators).
+    static func jpegData(_ image: UIImage, quality: CGFloat = 0.9) -> Data? {
+        image.jpegData(compressionQuality: quality)
     }
 
     // MARK: - Blank / solid frame (used to "clear" the badge)
