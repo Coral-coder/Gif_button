@@ -293,6 +293,28 @@ Default custom-bg path constant: `"/null"`. Flags: `FLAG_START=1`, `FLAG_END=0`.
    resource, NOT a raw JPEG. This is the hardest piece and the gate to it working;
    the stock app may even fetch pre-built dial packages from a server.
 
-Status: auth is ported + verified; the upload path is mapped but **not yet
-implemented or hardware-validated**. This badge is a materially larger effort
-than the DZBJ/BeamBox families and realistically needs on-device iteration.
+## The real blocker: it's a filesystem-over-BLE
+
+Further extraction (`WatchOpImpl`, `WatchManager`, `WatchInfo`, `GetWatchMsgTask`)
+shows the custom background isn't a single blob you hand the badge — it's a
+**file inside a FAT filesystem** on the badge's external flash (the path contains
+`/BGP`), managed by Jieli's **`com.jieli.jl_fatfs`** library *on the phone*. To
+put an image on the N88, the client has to:
+
+1. Read the device's FAT (via `ExternalFlashIOCtrl` OP_READ_DATA) to find free
+   clusters,
+2. Format the image into the firmware's expected on-flash resource format,
+3. Write the file data **and** update the FAT tables at computed flash addresses
+   (OP_WRITE_DATA + OP_QUERY_WRITE_RESULT with the native CRC),
+4. commit and switch the active dial.
+
+That means a working N88 upload requires porting **two** Jieli SDK components — the
+RCSP command/transport layer *and* the `jl_fatfs` FAT-filesystem client — plus the
+native CRC-16 and the dial-resource image format. This is a filesystem-over-BLE
+reimplementation, not a frame protocol.
+
+Status: auth is ported + verified; the upload path and its command opcodes are
+fully mapped (above). But faithfully reimplementing RCSP + `jl_fatfs` is a large,
+multi-component SDK port that cannot be validated without the N88 in hand — a
+materially different and larger undertaking than the self-contained DZBJ / BeamBox
+badge protocols, which were single-file transcriptions.
