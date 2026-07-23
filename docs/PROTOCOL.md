@@ -182,3 +182,61 @@ needs revisiting on hardware.)
 Before uploading, the stock app compares `ceil(totalBytes / 1024)` against the
 badge's reported `freespace` and aborts if it won't fit. Worth replicating once
 `freespace` is confirmed live.
+
+---
+
+# BeamBox badge — Bluetooth protocol
+
+Reverse-engineered from the stock **BeamBox** Android app
+(`com.guangshen.beambox`), a native app whose BLE logic lives in the
+`com.example.nn20.bleutils` / `com.example.nn20.manager` package. Transcribed
+from the decompiled classes `BleProtocolConstant`, `BleProtocolUtils`, the split
+builder `manager/j.java#t()`, and the image packer `utils/BinConverter`.
+Implemented in `Sources/Bluetooth/BeamBoxAdapter.swift`.
+
+> Status: extracted statically, byte-cross-checked against the decompile, **not
+> yet confirmed on hardware.**
+
+BeamBox is the **same protocol family** as DZBJ/e-Goods. Only three things
+differ; everything else (496-byte fragments, big-endian subpage counters
+counting **down** to 0, checksum `(0 − Σbytes) & 0xFF`, `IMB\0` still container,
+0x12345678 multi-frame GIF container, `{"type":N,"data":…}` envelope) is
+identical.
+
+## GATT
+
+- Service `000001F0-0000-1000-8000-00805F9B34FB`
+- Write `000001F1-…` (**write-without-response**)
+- Notify `000001F2-…`
+- (secondary service `000003C4/5/6` exists but is unused for image upload)
+
+## The three differences vs e-Goods
+
+1. **Frame head byte** is `0xF1` (`HEAD_APP_TO_DEVICE = -15`), not `0xC0`.
+   Device→app head is `0xA0`. Frame = `[0xF1, type, subTotal(BE u16),
+   curSub(BE u16), dataLen(BE u16), payload…, checksum]`.
+2. **JSON envelope digit matches the frame type**: album (6) →
+   `{"type":6,"data":…}`, gif (5) → `{"type":5,"data":…}`. (e-Goods always used
+   `type:6`.) The digit is literally `(byte)(type + 48)` in `t()`.
+3. **`IMB` still-image header constants** differ at three offsets — `[4]=4`
+   (e-Goods `0`), `[13]=0` (e-Goods `100`), data-offset field `[20]=36`
+   (e-Goods `32`). Header is 36 bytes, format `0x0B` (JPEG), dimensions `368`
+   (or `360`).
+
+## Animation container (`BinConverter.c`)
+
+32-byte global header (`0x12345678`, `16·n+24`, frameCount, **fixed 100ms**
+delay, 12-byte name `"output/100ms"`, total−1), then a 16-byte index entry per
+frame (`"frame_%05d."` 1-based name + offset), then each frame's 32-byte
+sub-header + JPEG packed **contiguously with no padding** (e-Goods 4-byte-aligns
+each frame). Last frame's "next" offset loops back to the first.
+
+## Transport
+
+The stock app streams fragments with a **windowed per-packet ACK** scheme (the
+badge acks with JSON containing `"GetPacketSuccess"` / `"GetPacketFail"`, sent in
+batches with a warm-up delay). This port instead relies on
+write-without-response flow control (`canSendWriteWithoutResponse`) plus
+MTU-sized fragments. If a unit proves to need explicit ACK pacing, add it in
+`BeamBoxProtocol.handleNotification`. No `ADD` challenge is used (BeamBox's
+status JSON has `freespace`/`allspace` but no challenge field).
