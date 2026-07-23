@@ -25,35 +25,44 @@ jobs:
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
-      - name: Streaming orchestration — mo/c0.java + mo/p.java (full)
+      - name: UpdateManager — the dial-push orchestration (FULL)
+        run: |
+          set +e
+          f=$(find jadx-out/sources -path '*qix*UpdateManager.java' | head -1)
+          echo "@@@@@ $f @@@@@"
+          [ -f "$f" ] && cat "$f" || echo "(UpdateManager missing)"
+      - name: UpdateManager helpers — anything it delegates chunking to
+        run: |
+          set +e
+          # classes in com/qix that reference PUSH_DIAL / file streaming / progress
+          for f in $(grep -rlniE "COMMAND_SET_PUSH_DIAL|onResponseUpdateProgress|updateDial|sendDialData|writeDial|pushDial|SEND_FILE_TYPE|nextPacket|sendNextData" jadx-out/sources/com/qix --include=*.java 2>/dev/null | sort -u | head -6); do
+            echo "@@@@@ $f @@@@@"; sed -n '1,260p' "$f"; echo ""
+          done
+      - name: mo/c0.java + mo/p.java — how blob is handed to UpdateManager
         run: |
           set +e
           for f in jadx-out/sources/mo/c0.java jadx-out/sources/mo/p.java; do
             echo "@@@@@ $f @@@@@"
-            [ -f "$f" ] && cat "$f" || echo "(missing)"
+            [ -f "$f" ] && grep -nE "DialTool|UpdateManager|setUpdateListener|startUpdate|pushDial|getWidth|getHeight|COMMAND_" "$f" | head -40
+            echo "--- body around sendDialFile ---"
+            [ -f "$f" ] && sed -n '/DialTool.sendDialFile/,+40p' "$f"
             echo ""
           done
-      - name: DialTool.sendDialFile + fileToBytes (the blob builder)
+      - name: A2DQueue + BLEBluetooth — command channel chunking (needSub subpackets)
         run: |
           set +e
-          f=$(find jadx-out/sources -path '*qix*DialTool.java' | head -1)
-          echo "=== $f ==="
-          [ -f "$f" ] && awk '/(sendDialFile|fileToBytes|sendVideoFile|getCRC16)/{p=1} p{print} /^    }$/{if(p)c++; if(c>0 && p){}}' "$f" | sed -n '1,200p'
-          echo "=== full method bodies (sed) ==="
-          [ -f "$f" ] && sed -n '/byte\[\] sendDialFile/,/^    }/p' "$f"
-      - name: BTBluetoothManager — how the big byte[] is chunked to writes
-        run: |
-          set +e
-          f=$(find jadx-out/sources -path '*qix*BTBluetoothManager.java' | head -1)
-          echo "=== $f ==="
-          [ -f "$f" ] && grep -nE "void |int |public |private |static |MTU|mtu|20|write|Chunk|chunk|dial|Dial|sendData|sendCommand" "$f" | head -80
-          echo "=== sendCommand_a2d + any file/dial sender bodies ==="
-          for m in sendCommand_a2d sendDialData sendData writeData sendFileData sendCustomTheme pushDial; do
-            [ -f "$f" ] && sed -n "/[^_]$m *(/,/^    }/p" "$f" | head -60
+          for n in A2DQueue BLEBluetooth; do
+            f=$(find jadx-out/sources -path "*qix*$n.java" | head -1)
+            echo "@@@@@ $f @@@@@"
+            [ -f "$f" ] && grep -nE "void |public |private |20|write|MTU|mtu|subpackage|subPackage|chunk|split|WriteType|WITHOUT_RESPONSE|characteristic" "$f" | head -50
+            echo "--- write/send bodies ---"
+            for m in synchronizedCommand writeCharacteristic sendData write send subpackage; do
+              [ -f "$f" ] && sed -n "/[^_A-Za-z]$m *(/,/^    }/p" "$f" | head -45
+            done
           done
-      - name: CommandCode constants (PUSH_DIAL, PICTURE_SIZE, MEMORY, MARK)
+      - name: CommandCode constants (dump ALL)
         run: |
           set +e
           f=$(find jadx-out/sources -path '*qix*CommandCode.java' | head -1)
           echo "=== $f ==="
-          [ -f "$f" ] && grep -nE "PUSH_DIAL|PICTURE|MEMORY|MARK|DIAL|THEME|PUSH|BOOT_ANI|SET_" "$f" | head -60
+          [ -f "$f" ] && grep -nE "COMMAND_" "$f" | head -140
