@@ -96,6 +96,12 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var winBatchToken = 0
     private var usingWindowedAck = false
 
+    // Paced-stream transport state (no acks; fixed inter-packet gap).
+    private var usingPacedStream = false
+    private var pacedWaitingForReady = false
+    private var pacedPacketDelayMs = 12
+    private var pacedTotal = 0
+
     private let lastDeviceKey = "lastDeviceID"
 
     init(settings: AppSettings) {
@@ -186,8 +192,18 @@ final class BluetoothManager: NSObject, ObservableObject {
                 self.status = .sending
                 self.sendContinuation = cont
                 self.winGeneration &+= 1
+                self.usingWindowedAck = false
+                self.usingPacedStream = false
+                self.pacedWaitingForReady = false
 
                 switch self.adapter.transport {
+                case .pacedStream(let packetDelayMs):
+                    self.usingPacedStream = true
+                    self.outgoing = packets
+                    self.pacedTotal = packets.count
+                    self.pacedPacketDelayMs = max(0, packetDelayMs)
+                    self.dlog("TX upload \(packets.count) pkt(s) [paced-stream \(packetDelayMs)ms]")
+                    self.pacedStep(peripheral, writeChar, generation: self.winGeneration)
                 case .windowedAck(let window, let packetDelayMs, let batchDelayMs):
                     self.usingWindowedAck = true
                     self.winPackets = packets
@@ -294,6 +310,45 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Paced-stream sender (no acks)
+
+    /// Write one fragment, then schedule the next after `pacedPacketDelayMs`,
+    /// gated by the BLE write-without-response buffer. When all fragments are
+    /// out, wait a "tail-protection" delay (so the badge can commit the last
+    /// fragments to flash) before declaring success. Mirrors the BeamBox app's
+    /// non-ack streaming path.
+    private func pacedStep(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic, generation: Int) {
+        guard generation == winGeneration, status == .sending else { return }
+
+        if outgoing.isEmpty {
+            // Tail-protection wait, scaled by packet count (matches the stock app:
+            // ~300ms per 1000 packets + 800ms, capped).
+            let tailMs = Swift.min((pacedTotal / 1000) * 300 + 800, 8000)
+            dlog("all \(pacedTotal) pkt written — tail wait \(tailMs)ms")
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(tailMs) / 1000.0) { [weak self] in
+                guard let self, generation == self.winGeneration, self.status == .sending else { return }
+                self.finishSend()
+            }
+            return
+        }
+
+        guard peripheral.canSendWriteWithoutResponse else {
+            // Resume from peripheralIsReady(...).
+            pacedWaitingForReady = true
+            return
+        }
+
+        peripheral.writeValue(outgoing.removeFirst(), for: characteristic, type: .withoutResponse)
+        sentCount += 1
+        let planned = sentCount + outgoing.count
+        uploadProgress = planned > 0 ? Double(sentCount) / Double(planned) : 0
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(pacedPacketDelayMs) / 1000.0) { [weak self] in
+            guard let self else { return }
+            self.pacedStep(peripheral, characteristic, generation: generation)
+        }
+    }
+
     /// Drive the queue. Write-with-response waits for each `didWrite`;
     /// write-without-response pumps only while `canSendWriteWithoutResponse`
     /// allows and resumes from `peripheralIsReady(...)`. Without that gate the
@@ -324,8 +379,10 @@ final class BluetoothManager: NSObject, ObservableObject {
         uploadProgress = 1
         lastMessage = "Sent."
         dlog("upload complete (\(max(winCursor, sentCount)) pkt written)")
-        winGeneration &+= 1            // invalidate any pending windowed timers
+        winGeneration &+= 1            // invalidate any pending windowed/paced timers
         usingWindowedAck = false
+        usingPacedStream = false
+        pacedWaitingForReady = false
         winPackets = []
         let cont = sendContinuation
         sendContinuation = nil
@@ -340,8 +397,10 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     private func failSend(_ error: Error) {
         outgoing.removeAll()
-        winGeneration &+= 1            // invalidate any pending windowed timers
+        winGeneration &+= 1            // invalidate any pending windowed/paced timers
         usingWindowedAck = false
+        usingPacedStream = false
+        pacedWaitingForReady = false
         winPackets = []
         status = isConnected ? .connected : .disconnected
         let cont = sendContinuation
@@ -547,9 +606,17 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        guard status == .sending, let writeChar else { return }
+        if usingPacedStream {
+            if pacedWaitingForReady {
+                pacedWaitingForReady = false
+                pacedStep(peripheral, writeChar, generation: winGeneration)
+            }
+            return
+        }
         // Windowed-ack delivery drives its own writes; only the fire-and-forget
         // pump resumes here.
-        guard status == .sending, !usingWindowedAck, let writeChar else { return }
+        guard !usingWindowedAck else { return }
         pump(peripheral, writeChar)
     }
 

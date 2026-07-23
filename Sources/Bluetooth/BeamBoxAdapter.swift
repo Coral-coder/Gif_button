@@ -45,11 +45,12 @@ final class BeamBoxAdapter: BadgeAdapter {
 
     func onConnect() -> [Data] { BeamBoxProtocol.onConnect() }
 
-    // BeamBox requires windowed, per-packet-acked delivery (see BleManager `j`):
-    // window 8, 10 ms between packets, 30 ms between windows. Without this the
-    // badge silently drops an over-run write-without-response stream — the
-    // "it writes but nothing arrives" symptom.
-    var transport: BadgeTransportMode { .windowedAck(window: 8, packetDelayMs: 10, batchDelayMs: 30) }
+    // This BeamBox firmware enters "updating" on the first fragment and consumes
+    // a paced stream, but never sends per-packet acks (the decompiled ACK path is
+    // labeled 旧协议 = "old protocol" and belongs to other units). So we stream all
+    // fragments with a fixed gap — fast enough to finish, slow enough that the
+    // firmware doesn't drop fragments while it writes each to flash.
+    var transport: BadgeTransportMode { .pacedStream(packetDelayMs: 15) }
 
     func ackResult(_ data: Data) -> BadgeAckResult { BeamBoxProtocol.ackResult(data) }
 

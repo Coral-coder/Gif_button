@@ -21,9 +21,14 @@ enum BadgeTransportMode: Equatable {
     case fireAndForget
     /// Send a window of `window` fragments (each `packetDelayMs` apart), then
     /// wait until the badge acks all of them before sending the next window,
-    /// with `batchDelayMs` between windows. Required by badges (e.g. BeamBox)
-    /// that would otherwise silently drop an over-run stream.
+    /// with `batchDelayMs` between windows. For badges that ack every packet
+    /// (the BeamBox app's "old protocol" path).
     case windowedAck(window: Int, packetDelayMs: Int, batchDelayMs: Int)
+    /// Stream every fragment with a fixed `packetDelayMs` gap (and BLE
+    /// write-buffer gating), waiting for NO acks. Used by badges that enter
+    /// "updating" and consume a paced stream but never ack per packet — pacing
+    /// keeps the firmware from dropping fragments.
+    case pacedStream(packetDelayMs: Int)
 }
 
 /// A badge's per-packet acknowledgement, parsed from a notification.
