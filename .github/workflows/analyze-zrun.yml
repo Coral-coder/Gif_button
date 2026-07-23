@@ -40,16 +40,30 @@ jobs:
           echo "===== watch / dial / bigfile / externalflash files ====="
           grep -rlniE "WatchFace|CustomWatch|BigFile|FatFile|LargeFile|ExternalFlash|FileTransfer|BumpFile|blockSize|packetSize" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | sort -u | head -60
 
-      - name: DUMP RCSP wire frame builder (head byte + CRC + MTU chunk)
+      - name: DUMP RCSP wire frame packer (the class that computes CRC16)
         run: |
           set +e
-          for f in $(grep -rliE "0x5A|(byte) 90|frameLength|dataLength|opcodeSn|packet|crc16|toByteArray|makeSendData|assemblePacket" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -iE "protocol|parse|impl|send|packet|frame|RcspProtocol|DataHandler|BluetoothSend" | sort -u | head -6); do
+          for f in $(grep -rliE "CryptoUtil.CRC16|\.CRC16\(|crc16" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -iE "protocol|parse|packet|frame|handler|impl|util" | grep -viE "CryptoUtil.java" | sort -u | head -4); do
             echo "@@@@@ $f @@@@@"; cat "$f"
           done
 
-      - name: DUMP ExternalFlashIOCtrlCmd (param byte layouts)
+      - name: DUMP flash param byte layouts
         run: |
           set +e
-          for f in $(find jadx-out/sources/com/jieli/jl_rcsp -name 'ExternalFlashIOCtrlCmd.java' -o -name 'ExternalFlashCmdHandler.java' -o -name 'CommandBase.java' 2>/dev/null | head -6); do
-            echo "@@@@@ $f @@@@@"; cat "$f"
+          for n in ExternalFlashIOCtrlParam CreateFlashFileParam WriteDataParam QueryWriteResultParam; do
+            f=$(find jadx-out/sources/com/jieli/jl_rcsp -name "$n.java" 2>/dev/null | head -1)
+            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
           done
+          for n in EnableCustomDialBgParam SetUsingDialParam GetFlashFreeSpaceParam; do
+            f=$(find jadx-out/sources/com/jieli/jl_rcsp -name "$n.java" 2>/dev/null | head -1)
+            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
+          done
+
+      - name: DUMP image → custom-bg bytes conversion (app side)
+        run: |
+          set +e
+          echo "===== classes that convert a bitmap for external-flash write ====="
+          grep -rlniE "buildExternalFlashWriteDataCmd|EnableCustomDialBg|RGB_565|copyPixelsToBuffer|customDialBg|CustomBg|dialBg" jadx-out/sources --include=*.java 2>/dev/null \
+            | grep -viE "com/jieli/jl_rcsp/model|androidx|/google/" | sort -u | head -8 | while read f; do
+              echo "@@@@@ $f @@@@@"; sed -n '1,220p' "$f"
+            done
