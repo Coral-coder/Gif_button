@@ -40,9 +40,16 @@ jobs:
           echo "===== watch / dial / bigfile / externalflash files ====="
           grep -rlniE "WatchFace|CustomWatch|BigFile|FatFile|LargeFile|ExternalFlash|FileTransfer|BumpFile|blockSize|packetSize" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | sort -u | head -60
 
-      - name: DUMP RCSP framing / parser
+      - name: DUMP RCSP wire frame builder (head byte + CRC + MTU chunk)
         run: |
           set +e
-          for f in $(grep -rlniE "0xFE|-2, |head|parseData|checkData|crc16|verify|packData|CommandBase|toParaData|toData\(" jadx-out/sources/com/jieli/jl_rcsp/parse jadx-out/sources/com/jieli/jl_rcsp/protocol jadx-out/sources/com/jieli/jl_rcsp/util 2>/dev/null | sort -u | head -8); do
+          for f in $(grep -rliE "0x5A|(byte) 90|frameLength|dataLength|opcodeSn|packet|crc16|toByteArray|makeSendData|assemblePacket" jadx-out/sources/com/jieli/jl_rcsp --include=*.java 2>/dev/null | grep -iE "protocol|parse|impl|send|packet|frame|RcspProtocol|DataHandler|BluetoothSend" | sort -u | head -6); do
+            echo "@@@@@ $f @@@@@"; cat "$f"
+          done
+
+      - name: DUMP ExternalFlashIOCtrlCmd (param byte layouts)
+        run: |
+          set +e
+          for f in $(find jadx-out/sources/com/jieli/jl_rcsp -name 'ExternalFlashIOCtrlCmd.java' -o -name 'ExternalFlashCmdHandler.java' -o -name 'CommandBase.java' 2>/dev/null | head -6); do
             echo "@@@@@ $f @@@@@"; cat "$f"
           done
