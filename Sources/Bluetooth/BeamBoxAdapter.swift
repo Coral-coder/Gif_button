@@ -45,6 +45,14 @@ final class BeamBoxAdapter: BadgeAdapter {
 
     func onConnect() -> [Data] { BeamBoxProtocol.onConnect() }
 
+    // BeamBox requires windowed, per-packet-acked delivery (see BleManager `j`):
+    // window 8, 10 ms between packets, 30 ms between windows. Without this the
+    // badge silently drops an over-run write-without-response stream — the
+    // "it writes but nothing arrives" symptom.
+    var transport: BadgeTransportMode { .windowedAck(window: 8, packetDelayMs: 10, batchDelayMs: 30) }
+
+    func ackResult(_ data: Data) -> BadgeAckResult { BeamBoxProtocol.ackResult(data) }
+
     func handleNotification(_ data: Data) -> BadgeNotificationResult {
         BeamBoxProtocol.handleNotification(data)
     }
@@ -265,6 +273,26 @@ enum BeamBoxProtocol {
         guard let json = extractStatusJSON(data) else { return result }
         result.freeSpaceKB = json["freespace"] as? Int
         return result
+    }
+
+    /// The badge acks each received upload packet with a JSON status containing
+    /// "GetPacketSuccess" (or "GetPacketFail" to request a batch retry). We scan
+    /// the raw bytes so we're robust to exact framing.
+    static func ackResult(_ data: Data) -> BadgeAckResult {
+        if contains(data, "GetPacketSuccess") { return .success }
+        if contains(data, "GetPacketFail") { return .fail }
+        return .none
+    }
+
+    private static func contains(_ data: Data, _ needle: String) -> Bool {
+        let hay = data
+        let pat = Array(needle.utf8)
+        guard hay.count >= pat.count else { return false }
+        let bytes = [UInt8](hay)
+        for i in 0...(bytes.count - pat.count) where Array(bytes[i..<i + pat.count]) == pat {
+            return true
+        }
+        return false
     }
 
     static func encode(_ payload: BadgePayload) throws -> [Data] {

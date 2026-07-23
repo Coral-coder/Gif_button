@@ -80,6 +80,22 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var sentCount = 0
     private var sendContinuation: CheckedContinuation<Void, Error>?
 
+    // Windowed-ack transport state (used when the adapter requests it).
+    private var winPackets: [Data] = []
+    private var winCursor = 0          // next packet index to send
+    private var winBatchStart = 0      // first index of the in-flight batch
+    private var winBatchSize = 0
+    private var winAcks = 0
+    private var winRetry = 0
+    private var winWindow = 8
+    private var winPacketDelayMs = 10
+    private var winBatchDelayMs = 30
+    /// Bumped on every send start/finish so stale timers/closures no-op.
+    private var winGeneration = 0
+    /// Bumped on every batch so a completed batch's timeout can't fire late.
+    private var winBatchToken = 0
+    private var usingWindowedAck = false
+
     private let lastDeviceKey = "lastDeviceID"
 
     init(settings: AppSettings) {
@@ -165,14 +181,116 @@ final class BluetoothManager: NSObject, ObservableObject {
                 guard self.sendContinuation == nil, self.status != .sending else {
                     cont.resume(throwing: BadgeError.busy); return
                 }
-                self.outgoing = packets
                 self.sentCount = 0
                 self.uploadProgress = 0
                 self.status = .sending
                 self.sendContinuation = cont
-                self.dlog("TX upload \(packets.count) pkt(s)")
-                self.pump(peripheral, writeChar)
+                self.winGeneration &+= 1
+
+                switch self.adapter.transport {
+                case .windowedAck(let window, let packetDelayMs, let batchDelayMs):
+                    self.usingWindowedAck = true
+                    self.winPackets = packets
+                    self.winCursor = 0
+                    self.winRetry = 0
+                    self.winWindow = max(1, window)
+                    self.winPacketDelayMs = max(0, packetDelayMs)
+                    self.winBatchDelayMs = max(0, batchDelayMs)
+                    self.dlog("TX upload \(packets.count) pkt(s) [windowed-ack w=\(window)]")
+                    self.sendWindow(peripheral, writeChar, generation: self.winGeneration)
+                case .fireAndForget:
+                    self.usingWindowedAck = false
+                    self.outgoing = packets
+                    self.dlog("TX upload \(packets.count) pkt(s)")
+                    self.pump(peripheral, writeChar)
+                }
             }
+        }
+    }
+
+    // MARK: - Windowed-ack sender
+
+    /// Send the next window of fragments, then wait for the badge to ack all of
+    /// them (in `didUpdateValueFor`) before advancing. Mirrors the stock BeamBox
+    /// BleManager: `window` packets `packetDelayMs` apart, retry a batch on a
+    /// fail/timeout (≤3×) from its start, `batchDelayMs` between batches.
+    private func sendWindow(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic, generation: Int) {
+        guard generation == winGeneration, status == .sending else { return }
+        if winCursor >= winPackets.count { finishSend(); return }
+
+        winBatchStart = winCursor
+        winBatchSize = Swift.min(winWindow, winPackets.count - winCursor)
+        winAcks = 0
+        winBatchToken &+= 1
+        let token = winBatchToken
+
+        for i in 0..<winBatchSize {
+            let packet = winPackets[winBatchStart + i]
+            let delay = Double(winPacketDelayMs * i) / 1000.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, token == self.winBatchToken, self.status == .sending else { return }
+                peripheral.writeValue(packet, for: characteristic, type: .withoutResponse)
+            }
+        }
+        winCursor = winBatchStart + winBatchSize
+
+        // Batch timeout → treat like a fail and retry the batch. The per-batch
+        // token ensures a completed batch's timeout can't fire during a later one.
+        let timeout = Double(winPacketDelayMs * winBatchSize) / 1000.0 + 2.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            guard let self, token == self.winBatchToken,
+                  generation == self.winGeneration, self.status == .sending else { return }
+            if self.winAcks < self.winBatchSize {
+                self.dlog("batch timeout (\(self.winAcks)/\(self.winBatchSize) acked) — retrying")
+                self.retryOrFailBatch(peripheral, characteristic, generation: generation)
+            }
+        }
+    }
+
+    /// Called from the notification handler when the badge acks a packet.
+    private func windowedAckReceived(_ result: BadgeAckResult) {
+        guard usingWindowedAck, status == .sending,
+              let peripheral, let writeChar else { return }
+        let generation = winGeneration
+        switch result {
+        case .success:
+            winAcks += 1
+            let acked = winBatchStart + min(winAcks, winBatchSize)
+            uploadProgress = winPackets.isEmpty ? 0 : Double(acked) / Double(winPackets.count)
+            // Advance exactly once per batch (guard against duplicate acks).
+            if winAcks == winBatchSize {
+                winRetry = 0
+                if winCursor >= winPackets.count {
+                    finishSend()
+                } else {
+                    let delay = Double(winBatchDelayMs) / 1000.0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        guard let self else { return }
+                        self.sendWindow(peripheral, writeChar, generation: generation)
+                    }
+                }
+            }
+        case .fail:
+            dlog("batch nack — retrying from pkt \(winBatchStart)")
+            retryOrFailBatch(peripheral, writeChar, generation: generation)
+        case .none:
+            break
+        }
+    }
+
+    private func retryOrFailBatch(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic, generation: Int) {
+        guard generation == winGeneration, status == .sending else { return }
+        winRetry += 1
+        if winRetry >= 3 {
+            failSend(BadgeError.badgeUnsupported("badge stopped acknowledging the upload"))
+            return
+        }
+        // Back off between retries, and resend the same batch from its start.
+        winBatchDelayMs = winRetry >= 2 ? 120 : 80
+        winCursor = winBatchStart
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            self.sendWindow(peripheral, characteristic, generation: generation)
         }
     }
 
@@ -205,7 +323,10 @@ final class BluetoothManager: NSObject, ObservableObject {
         status = .connected
         uploadProgress = 1
         lastMessage = "Sent."
-        dlog("upload complete (\(sentCount) pkt written)")
+        dlog("upload complete (\(max(winCursor, sentCount)) pkt written)")
+        winGeneration &+= 1            // invalidate any pending windowed timers
+        usingWindowedAck = false
+        winPackets = []
         let cont = sendContinuation
         sendContinuation = nil
         cont?.resume()
@@ -219,6 +340,9 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     private func failSend(_ error: Error) {
         outgoing.removeAll()
+        winGeneration &+= 1            // invalidate any pending windowed timers
+        usingWindowedAck = false
+        winPackets = []
         status = isConnected ? .connected : .disconnected
         let cont = sendContinuation
         sendContinuation = nil
@@ -389,6 +513,13 @@ extension BluetoothManager: CBPeripheralDelegate {
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
         dlog("RX \(Self.hexPreview(data))")
+
+        // Windowed-ack transport: advance the upload when the badge acks packets.
+        if usingWindowedAck, status == .sending {
+            let ack = adapter.ackResult(data)
+            if ack != .none { windowedAckReceived(ack) }
+        }
+
         let result = adapter.handleNotification(data)
         if let space = result.freeSpaceKB { freeSpaceKB = space; dlog("freespace=\(space)KB") }
         guard !result.reply.isEmpty else { return }
@@ -416,7 +547,9 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
-        guard status == .sending, let writeChar else { return }
+        // Windowed-ack delivery drives its own writes; only the fire-and-forget
+        // pump resumes here.
+        guard status == .sending, !usingWindowedAck, let writeChar else { return }
         pump(peripheral, writeChar)
     }
 

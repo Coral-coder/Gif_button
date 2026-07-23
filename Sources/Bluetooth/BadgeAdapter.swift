@@ -14,6 +14,21 @@ struct BadgeNotificationResult {
     var freeSpaceKB: Int?
 }
 
+/// How a badge wants its upload packets delivered.
+enum BadgeTransportMode: Equatable {
+    /// Stream every fragment back-to-back, paced only by the BLE controller's
+    /// write-without-response buffer. Used by badges that ack nothing.
+    case fireAndForget
+    /// Send a window of `window` fragments (each `packetDelayMs` apart), then
+    /// wait until the badge acks all of them before sending the next window,
+    /// with `batchDelayMs` between windows. Required by badges (e.g. BeamBox)
+    /// that would otherwise silently drop an over-run stream.
+    case windowedAck(window: Int, packetDelayMs: Int, batchDelayMs: Int)
+}
+
+/// A badge's per-packet acknowledgement, parsed from a notification.
+enum BadgeAckResult: Equatable { case none, success, fail }
+
 /// One badge family's protocol. GifCast auto-detects which adapter matches the
 /// connected device (by advertised service UUID / name) and routes through it,
 /// so different badges "just work".
@@ -41,8 +56,21 @@ protocol BadgeAdapter: AnyObject {
     /// Encode content into write packets.
     func encode(_ payload: BadgePayload) throws -> [Data]
 
+    /// How this badge wants upload packets delivered (default: fire-and-forget).
+    var transport: BadgeTransportMode { get }
+
+    /// Classify a notification as a per-packet ack (default: `.none`). Only used
+    /// when `transport` is `.windowedAck`.
+    func ackResult(_ data: Data) -> BadgeAckResult
+
     /// Reset per-connection state.
     func reset()
+}
+
+// Defaults so adapters that don't use acked transport need no boilerplate.
+extension BadgeAdapter {
+    var transport: BadgeTransportMode { .fireAndForget }
+    func ackResult(_ data: Data) -> BadgeAckResult { .none }
 }
 
 /// Shared transport tuning. The DZBJ/BeamBox protocols fragment their payload
