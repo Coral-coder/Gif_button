@@ -9,7 +9,7 @@ import Foundation
 /// but remember this file is committed, so anything here becomes public if you
 /// push it. (Prefer entering keys in Settings; they persist on-device.)
 enum APIKeys {
-    static let giphy = ""   // https://developers.giphy.com
+    static let giphy = "owUAg8ndbHDkQ5CmneQRX15agJ3TGmbc"   // https://developers.giphy.com
     static let tenor = ""   // https://developers.google.com/tenor
     static let klipy = ""   // https://klipy.com/developers
 }
