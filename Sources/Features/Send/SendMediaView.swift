@@ -36,11 +36,9 @@ struct SendMediaView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                preview
-                    .frame(height: 220)
+                BadgePreview(data: previewData, size: 240)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal)
+                    .padding(.top, 4)
 
                 Text(pending.title).font(.headline).lineLimit(2).multilineTextAlignment(.center)
 
@@ -82,20 +80,6 @@ struct SendMediaView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
             .task { await loadPreview() }
-        }
-    }
-
-    @ViewBuilder private var preview: some View {
-        if let data = previewData {
-            if Self.isGIF(data) {
-                AnimatedGIFView(data: data)
-            } else if let image = UIImage(data: data) {
-                Image(uiImage: image).resizable().scaledToFit()
-            } else {
-                Color.gray.opacity(0.15).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-            }
-        } else {
-            Color.gray.opacity(0.15).overlay(ProgressView())
         }
     }
 

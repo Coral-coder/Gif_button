@@ -91,6 +91,15 @@ docs/PROTOCOL.md            The reverse-engineered badge protocol
 PRIVACY.md                  What the app does and does not do with data
 ```
 
+## Design & credits
+
+The dark, neon-cyan visual design is adapted from
+[**AuraCast**](https://github.com/Manaiakalani/auracast) (MIT © 2025 Felix
+Herbst) — a web uploader for round LED badges — reimplemented in SwiftUI. Note
+that AuraCast targets a *different* badge (E87/L8, Jieli BR23) with its own BLE
+protocol; GifCast keeps its own reverse-engineered DZBJ protocol underneath. See
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
 ## Privacy
 
 See [`PRIVACY.md`](PRIVACY.md). Short version: no tracking, no third parties
