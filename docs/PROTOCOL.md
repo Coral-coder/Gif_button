@@ -249,3 +249,50 @@ from the stock BleManager (`manager/j.java`) in
 No `ADD` challenge is used (BeamBox's status JSON has `freespace`/`allspace` but
 no challenge field). Fragments are also MTU-sized (see BadgeTransport) so no
 single frame exceeds the negotiated write length.
+
+---
+
+# N88 badge — Jieli RCSP (service AE00)
+
+Reverse-engineered from the **ZRun** app (`com.zijun.zrun`). The N88 advertises
+service `0000AE00` (write `AE01`, notify `AE02`) and speaks the full **Jieli RCSP
+SDK** protocol (`com.jieli.jl_rcsp`) — the same family as E87/L8. This is a
+smartwatch stack, not a simple badge frame protocol; putting an image on it means
+pushing a **custom watch-face / dial background** into the badge's external
+flash. Implemented in `Sources/Bluetooth/AuraCastAdapter.swift` (auth handshake
+done; upload is the remaining work).
+
+## Upload command sequence (mapped from the SDK)
+
+All via `ExternalFlashIOCtrlCmd` (RCSP opcode **26 / 0x1A**), sub-op in the first
+param byte:
+
+| Step | Command | sub-op |
+|------|---------|--------|
+| 1 | Auth handshake (Jieli block cipher — see `JieliAuth`, done) | — |
+| 2 | `GetDeviceInfo` (`GetTargetInfoCmd`) → MTU, screen size, authKey, fileConfig | opcode 3 |
+| 3 | `GetFlashFreeSpace` | 0x1A op 12 |
+| 4 | `EnableCustomDialBg(path)` | 0x1A op 3 (DIAL_ACTION) |
+| 5 | `CreateFileStart(size, name)` | 0x1A op 2, flag START=1 |
+| 6 | loop: `WriteData(addr, len, bytes)` then `QueryWriteResult(addr, crc16)` | 0x1A op 0 / op 8 |
+| 7 | `CreateFileStop` | 0x1A op 2, flag END=0 |
+| 8 | `SwitchUsingDial(name)` | 0x1A op 3 (DIAL_ACTION) |
+
+Default custom-bg path constant: `"/null"`. Flags: `FLAG_START=1`, `FLAG_END=0`.
+
+## Remaining unknowns (need the device to close)
+
+1. **RCSP wire frame format** — the exact head byte + how (opcode, sn, params)
+   are packed and where the CRC sits. Partially extractable; not yet transcribed.
+2. **CRC-16 variant** — `CryptoUtil.CRC16` is a *native* call
+   (`System.loadLibrary("jl_crc")`), so the poly/init/xorout must be confirmed on
+   hardware (CRC-16/CCITT-FALSE or XMODEM are the likely candidates).
+3. **Per-command param byte layouts** (`CreateFlashFileParam`, `WriteDataParam`,
+   `QueryWriteResultParam`, `EnableCustomDialBgParam`, `SetUsingDialParam`).
+4. **Dial-background container format** — the firmware expects a valid Jieli dial
+   resource, NOT a raw JPEG. This is the hardest piece and the gate to it working;
+   the stock app may even fetch pre-built dial packages from a server.
+
+Status: auth is ported + verified; the upload path is mapped but **not yet
+implemented or hardware-validated**. This badge is a materially larger effort
+than the DZBJ/BeamBox families and realistically needs on-device iteration.

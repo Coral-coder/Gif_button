@@ -21,9 +21,11 @@ import Foundation
 /// Until then `isSupported` is false: the app will *recognize* the badge and say
 /// so, rather than sending packets that won't work.
 final class AuraCastAdapter: BadgeAdapter {
-    let id = "auracast"
-    let displayName = "AuraCast badge (E87/L8)"
+    let id = "jieli-ae00"
+    let displayName = "Jieli badge (E87/L8/N88)"
     let serviceUUID = CBUUID(string: "0000AE00-0000-1000-8000-00805F9B34FB")
+    // Auth is ported; the custom-dial-bg upload (Jieli RCSP external-flash file
+    // transfer) is mapped in docs/PROTOCOL.md but not yet implemented/verified.
     let isSupported = false
 
     private let writeUUID = CBUUID(string: "0000AE01-0000-1000-8000-00805F9B34FB")   // WriteNoResponse

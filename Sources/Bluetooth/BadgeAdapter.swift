@@ -105,7 +105,7 @@ enum BadgeRegistry {
     }
 
     /// Name prefixes that flag "this looks like a badge" while scanning.
-    static let scanNamePrefixes = ["DZBJ-", "BEAM", "BB-", "E87", "L8"]
+    static let scanNamePrefixes = ["DZBJ-", "BEAM", "BB-", "E87", "L8", "N88"]
 
     /// Strictly service-based: pick the adapter whose service the device
     /// advertises. If nothing matches, return an Unknown adapter (connects but
