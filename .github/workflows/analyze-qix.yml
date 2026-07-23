@@ -1,8 +1,5 @@
 name: Analyze Qix
 
-# The N88 badge exposes the Qix service (C2E6FD00-…-BEF9C223DF6A), not Jieli AE00.
-# Decompile ZRun and dump the com.qix.library BLE command protocol + picture/dial
-# upload path. Interop reverse-engineering only; nothing decompiled is committed.
 on:
   workflow_dispatch:
   push:
@@ -28,23 +25,18 @@ jobs:
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
-      - name: TREE of com/qix/library (with sizes)
+      - name: DUMP send framing (BLEBluetooth) + CommandCode
         run: |
           set +e
-          find jadx-out/sources/com/qix/library -name '*.java' -printf '%s\t%p\n' 2>/dev/null | sort -k2
-      - name: DUMP Qix command framing + CommandCode
-        run: |
-          set +e
-          for n in CommandCode ConstantsUUID BLEBluetooth; do
-            f=$(find jadx-out/sources/com/qix/library -name "$n.java" 2>/dev/null | head -1)
-            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
+          for p in $(find jadx-out/sources/com/qix/library -name 'BLEBluetooth.java' -o -name 'CommandCode.java' -o -name 'SendCommand*.java' -o -name 'Command.java' 2>/dev/null | sort -u); do
+            echo "@@@@@ $p @@@@@"; cat "$p"
           done
-      - name: DUMP picture / custom-theme / dial upload
+      - name: DUMP picture / custom-theme / dial / bootanim upload command
         run: |
           set +e
-          echo "===== files touching picture/theme/dial send ====="
-          grep -rliE "CustomTheme|customTheme|sendPicture|pushPicture|picture|dial|watchface|BootAnimation|0x|writeData|packet|crc" jadx-out/sources/com/qix/library --include=*.java 2>/dev/null | sort -u | head -30
-          echo "===== dump the command-builder / manager files ====="
-          for f in $(grep -rliE "CommandCode\.|writeCharacteristic|sendData|byte\[\]|createPacket|assemble|crc" jadx-out/sources/com/qix/library/command jadx-out/sources/com/qix/library/bluetooth 2>/dev/null | sort -u | head -8); do
-            echo "@@@@@ $f @@@@@"; sed -n '1,260p' "$f"
+          echo "===== files that build a picture/theme/dial send ====="
+          grep -rlniE "CustomTheme|customTheme|updateTheme|sendTheme|BootAnimation|watchDial|customDial|picture|RGB|bmp|thumbnail|565" jadx-out/sources/com/qix/library --include=*.java 2>/dev/null | grep -viE "Return|Parse|Receive" | sort -u | head -20
+          echo "===== dump the top command-send classes touching theme/picture ====="
+          for f in $(grep -rliE "CustomTheme|updateCustomTheme|sendCustomTheme|watchTheme|dialData|565|RGB_565|Bitmap" jadx-out/sources/com/qix/library --include=*.java 2>/dev/null | grep -viE "/bean/|Return|ReceiveCommandParse" | sort -u | head -6); do
+            echo "@@@@@ $f @@@@@"; sed -n '1,300p' "$f"
           done
