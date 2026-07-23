@@ -495,10 +495,10 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
     }
 
-    /// Interactive Qix (C2E6FD, N88) upload: build the dial file from an RGB565
-    /// (little-endian) image and stream it via the UpdateManager-style dial-push
-    /// sequence. All state runs on the main queue (where the CB delegate + uploader
-    /// also run). Each logical frame is fragmented to the negotiated write length.
+    /// Interactive Qix (C2E6FD, N88) upload: build the dial file from a big-endian
+    /// RGB565 image and stream it via the UpdateManager-style dial-push sequence.
+    /// All state runs on the main queue (where the CB delegate + uploader also
+    /// run). Each logical frame is fragmented to the negotiated write length.
     func uploadQixDial(rgb565: [UInt8], width: Int, height: Int) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             DispatchQueue.main.async {

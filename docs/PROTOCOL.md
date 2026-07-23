@@ -252,15 +252,19 @@ single frame exceeds the negotiated write length.
 
 ---
 
-# N88 badge — Jieli RCSP (service AE00)
+# E87 / L8 badges — Jieli RCSP (service AE00)
 
-Reverse-engineered from the **ZRun** app (`com.zijun.zrun`). The N88 advertises
-service `0000AE00` (write `AE01`, notify `AE02`) and speaks the full **Jieli RCSP
-SDK** protocol (`com.jieli.jl_rcsp`) — the same family as E87/L8. This is a
-smartwatch stack, not a simple badge frame protocol; putting an image on it means
-pushing a **custom watch-face / dial background** into the badge's external
-flash. Implemented in `Sources/Bluetooth/AuraCastAdapter.swift` (auth handshake
-done; upload is the remaining work).
+> **Correction:** the N88 also *advertises* AE00, so this path was originally
+> built for it — but on the N88 the AE00 service never answers image commands.
+> The N88's real protocol is **Qix** (`C2E6FD00`), documented in its own section
+> below. This AE00/Jieli-RCSP path is kept for genuine E87/L8 badges.
+
+Reverse-engineered from the **ZRun** app (`com.zijun.zrun`). These badges advertise
+service `0000AE00` (write `AE01`, notify `AE02`) and speak the full **Jieli RCSP
+SDK** protocol (`com.jieli.jl_rcsp`). This is a smartwatch stack, not a simple
+badge frame protocol; putting an image on it means pushing a **custom watch-face /
+dial background** into the badge's external flash. Implemented in
+`Sources/Bluetooth/AuraCastAdapter.swift` (auth handshake done).
 
 ## Upload command sequence (mapped from the SDK)
 
@@ -340,3 +344,80 @@ fix once the debug log shows where it lands):
 The auth handshake + framing + command sequence are transcribed verbatim; the
 debug log will show the first step the badge rejects (with its status byte), which
 pinpoints any of the three above.
+
+---
+
+# N88 badge — Qix dial-push (service C2E6FD00)
+
+Reverse-engineered from the **ZRun** app's `com.qix.library`. The N88 advertises
+**two** services — `0000AE00` (Jieli, a dead end here) and
+`C2E6FD00-E966-1000-8000-BEF9C223DF6A` (**Qix**). Qix is the one that actually
+displays images, so the adapter registry orders `QixAdapter` before the Jieli
+`AuraCastAdapter`. Implemented in `QixProtocol.swift` (wire format, byte-exact),
+`QixUploader.swift` (the interactive dial-push session) and `QixAdapter.swift`.
+
+## GATT
+
+- Service `C2E6FD00-E966-1000-8000-BEF9C223DF6A`
+- Write `C2E6FD02`, notify `C2E6FD01` (control `C2E6FD03`)
+
+## Command frame (`BTCommandManager` / `UpdateManager`, byte-exact)
+
+`[0x9E][check][flag][cmd][len_lo][len_hi][data…]`
+
+- `check` = plain byte-sum of `[flag,cmd,len_lo,len_hi,data…]`
+- `len` is the data length, 16-bit little-endian
+- `flag` (config/command channel) = `(isConfig<<7)|(serial<<3)|(needSub<<2)|(hasResponse<<1)|d`
+- `flag` (update channel) = `(serial<<3)|(needSub<<2)|1` — i.e. isConfig=0,
+  hasResponse=0, **d=1** (a distinct flag byte from the command channel)
+- `needSub = data.len + 6 > 20`; `serial` wraps 0…15
+- The BLE layer fragments the whole frame into ≤MTU writes; the device
+  reassembles by concatenation (fragment size is irrelevant to the protocol).
+
+## Badge info → picture size (`0xC6`/`0xC7`)
+
+On connect we send `REQ_BADGE_INFO` (`0xC6`, data `{1}`). The reply (`0xC7`)
+payload (after the 6-byte frame header) is:
+
+`[0]=1 flag, [1..2]=width, [3..4]=height, [5..6]=pictureWidth, [7..8]=pictureHeigh,
+[9..12]=memory` — all little-endian. The dial image is built at
+**pictureWidth × pictureHeigh** (falls back to 240² until the reply lands).
+
+## Dial file blob (`DialTool.fileToBytes`, byte-exact)
+
+`[fileHeader:27][imageHeader:8][rgb565-BE : w*h*2]`
+
+- **imageHeader** (8): `[0x42,'M',w_lo,w_hi,h_lo,h_hi,0x10,0x80]` (`0x10` = 16bpp)
+- **fileHeader** (27): `[0]=0xBC, [1]=0xAF, [2]=type(dial=5), [3..4]=index(LE16),
+  [13..16]=imageBlock.len (LE32), [25..26]=CRC-16 (LE)`; all other bytes zero.
+- **RGB565** is standard `(R5<<11)|(G6<<5)|B5`, written **big-endian**
+  (high byte first — `ImageCacheUtils.shortToByteArray`).
+- **CRC-16** (`DialTool.getCRC16`) is a byte-swap CCITT variant over the
+  imageBlock (imageHeader + pixels), init `0xFFFF`.
+
+## Streaming = the OTA "update" channel (`UpdateManager`, byte-exact)
+
+The blob is split into its 27-byte fileHeader and the image body, then streamed
+over the same update channel the watch app uses for firmware/dial pushes. The
+device flow-controls the whole exchange:
+
+| Direction | cmd | payload |
+|-----------|-----|---------|
+| TX | `0xC0` REQ_UPDATE | the 27-byte fileHeader |
+| RX | `0xC1` | `[status][allowLen:LE32][offset:LE32]` — grants a window |
+| TX | `0xC2` SEND_DATA | `[len:LE32][offset:LE32][chunk]` (chunk ≤ allowLen) |
+| RX | `0xC3` | `[status][nextOffset:LE32]` — ack + next offset |
+| TX | `0xC4` REQ_UPDATE_CON | `{3}` (stop) once all data is acked |
+| RX | `0xC5` | `[status]` — `0` = success |
+
+We honour `allowLen` per package and the offset each `0xC3` echoes back
+(response ints are little-endian, `TypeConversion.bytes2Int`). Progress is
+`offset / dataTotalLength`. Every step + the device's status byte are written to
+the on-device debug log, so the first rejected step is visible.
+
+## Pending on-device validation
+
+The wire format, blob layout, CRC, RGB565 byte order and streaming handshake are
+all transcribed byte-for-byte from the decompile. Not yet hardware-tested — the
+debug log will show the first step the N88 rejects (with its status byte) if any
+assumption (most likely the picture size or a status-code meaning) needs a tweak.
