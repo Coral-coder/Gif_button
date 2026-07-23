@@ -110,22 +110,24 @@ struct SendMediaView: View {
             let data = try await resolveData()
             let animate = sendAsAnimation && Self.isGIF(data)
 
-            let built = try await Task.detached(priority: .userInitiated) { () throws -> (packets: [Data], thumb: Data?) in
-                let packets: [Data]
+            let built = try await Task.detached(priority: .userInitiated) { () throws -> (payload: BadgePayload, thumb: Data?) in
+                let payload: BadgePayload
                 if animate {
                     let animation = try ImageEncoder.encodeAnimation(fromGIFData: data, side: side, quality: quality)
-                    packets = EGoodsProtocol.packAnimation(animation)
+                    payload = .animation(animation)
                 } else {
                     guard let ui = UIImage(data: data) else { throw BadgeError.encodingFailed }
                     let image = try ImageEncoder.encodeStill(ui, side: side, quality: quality)
-                    packets = EGoodsProtocol.packStillImage(image)
+                    payload = .still(image)
                 }
                 let thumb = ImageEncoder.thumbnail(from: data)?.jpegData(compressionQuality: 0.7)
-                return (packets, thumb)
+                return (payload, thumb)
             }.value
 
+            // Encode via the auto-detected badge adapter.
+            let packets = try bluetooth.encodePackets(built.payload)
             let preview = built.thumb.flatMap(UIImage.init(data:))
-            queue.enqueue(SendJob(label: label, preview: preview, packets: built.packets))
+            queue.enqueue(SendJob(label: label, preview: preview, packets: packets))
 
             statusText = bluetooth.isConnected
                 ? "Sending to badge…"

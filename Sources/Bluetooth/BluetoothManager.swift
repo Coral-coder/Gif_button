@@ -41,6 +41,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published private(set) var services: [GATTService] = []
     @Published private(set) var status: ConnectionStatus = .idle
     @Published private(set) var freeSpaceKB: Int?
+    /// Auto-detected badge family (nil until services are discovered).
+    @Published private(set) var detectedBadgeName: String?
+    /// False when the connected badge is recognized but not yet supported.
+    @Published private(set) var badgeSupported = true
     /// True once we're connected AND the write characteristic is discovered.
     @Published private(set) var isReady = false
     @Published var isScanning = false
@@ -48,14 +52,15 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published private(set) var uploadProgress: Double = 0
 
     private let settings: AppSettings
-    private let descriptor = BadgeDescriptor.eGoods
+    /// Known badge protocols; the right one is auto-selected on connect.
+    private let adapters = BadgeRegistry.makeAdapters()
+    private lazy var adapter: BadgeAdapter = adapters[0]
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var writeChar: CBCharacteristic?
     private var writeType: CBCharacteristicWriteType = .withResponse
     private var notifyChar: CBCharacteristic?
-    private var didVerify = false
-    private var pendingVerify: Any?
+    private var pendingReply: [Data] = []
     private var autoConnectTarget: UUID?
     private var suppressAutoConnect = false
 
@@ -96,7 +101,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     func connect(_ device: DiscoveredDevice) {
         stopScan()
         status = .connecting
-        didVerify = false
+        adapters.forEach { $0.reset() }
         suppressAutoConnect = false
         peripheral = device.peripheral
         device.peripheral.delegate = self
@@ -125,7 +130,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         // Fast path: retrieve the known peripheral and connect directly.
         if let known = central.retrievePeripherals(withIdentifiers: [uuid]).first {
             let device = DiscoveredDevice(peripheral: known,
-                                          name: known.name ?? descriptor.displayName,
+                                          name: known.name ?? "Badge",
                                           rssi: 0, isBadge: true)
             connect(device)
             return
@@ -190,7 +195,12 @@ final class BluetoothManager: NSObject, ObservableObject {
         let cont = sendContinuation
         sendContinuation = nil
         cont?.resume()
-        flushPendingVerify()
+        flushPendingReply()
+    }
+
+    /// Encode content into wire packets using the active (auto-detected) adapter.
+    func encodePackets(_ payload: BadgePayload) throws -> [Data] {
+        try adapter.encode(payload)
     }
 
     private func failSend(_ error: Error) {
@@ -206,11 +216,11 @@ final class BluetoothManager: NSObject, ObservableObject {
         peripheral.writeValue(data, for: writeChar, type: writeType)
     }
 
-    private func flushPendingVerify() {
-        guard !didVerify, let value = pendingVerify else { return }
-        pendingVerify = nil
-        sendControl(EGoodsProtocol.deviceIdVerification(ret: value))
-        didVerify = true
+    private func flushPendingReply() {
+        guard !pendingReply.isEmpty else { return }
+        let reply = pendingReply
+        pendingReply = []
+        for packet in reply { sendControl(packet) }
     }
 }
 
@@ -233,7 +243,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
                         rssi RSSI: NSNumber) {
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = advName ?? peripheral.name ?? "Unknown device"
-        let isBadge = name.uppercased().hasPrefix(descriptor.namePrefix.uppercased())
+        let advServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        let isBadge = adapters.contains { $0.matches(name: name, serviceUUIDs: advServices) }
+            || BadgeRegistry.scanNamePrefixes.contains { name.uppercased().hasPrefix($0.uppercased()) }
         let device = DiscoveredDevice(peripheral: peripheral, name: name, rssi: RSSI.intValue, isBadge: isBadge)
         if let idx = discovered.firstIndex(where: { $0.id == device.id }) {
             discovered[idx] = device
@@ -251,7 +263,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         status = .connected
-        connectedName = peripheral.name ?? descriptor.displayName
+        connectedName = peripheral.name ?? "Badge"
+        detectedBadgeName = nil
+        badgeSupported = true
         services = []
         writeChar = nil
         notifyChar = nil
@@ -270,10 +284,11 @@ extension BluetoothManager: CBCentralManagerDelegate {
                         didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         status = .disconnected
         connectedName = nil
+        detectedBadgeName = nil
         writeChar = nil
         notifyChar = nil
-        didVerify = false
-        pendingVerify = nil
+        pendingReply = []
+        adapters.forEach { $0.reset() }
         isReady = false
         services = []
         if sendContinuation != nil { failSend(BadgeError.notConnected) }
@@ -289,6 +304,11 @@ extension BluetoothManager: CBCentralManagerDelegate {
 
 extension BluetoothManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        // Auto-detect which badge protocol this device speaks.
+        let serviceUUIDs = (peripheral.services ?? []).map { $0.uuid }
+        adapter = BadgeRegistry.detect(name: peripheral.name, serviceUUIDs: serviceUUIDs, from: adapters)
+        detectedBadgeName = adapter.displayName
+        badgeSupported = adapter.isSupported
         for service in peripheral.services ?? [] {
             peripheral.discoverCharacteristics(nil, for: service)
         }
@@ -308,53 +328,38 @@ extension BluetoothManager: CBPeripheralDelegate {
             services.append(record)
         }
 
-        // Choose characteristics by PROPERTY, not UUID — a characteristic's role
-        // is defined by its properties. Prefer the badge's own service, then any.
-        func pickWrite(_ list: [CBCharacteristic]) -> CBCharacteristic? {
-            list.first { $0.properties.contains(.write) }
-                ?? list.first { $0.properties.contains(.writeWithoutResponse) }
-        }
-        func pickNotify(_ list: [CBCharacteristic]) -> CBCharacteristic? {
-            list.first { $0.properties.contains(.notify) }
-                ?? list.first { $0.properties.contains(.indicate) }
-        }
+        // Let the detected adapter pick its write/notify characteristics.
+        guard service.uuid == adapter.serviceUUID else { return }
+        let selection = adapter.selectCharacteristics(chars)
+        if let w = selection.write { writeChar = w }
+        if let n = selection.notify { notifyChar = n }
+        writeType = selection.writeType
 
-        if service.uuid == descriptor.serviceUUID {
-            if let w = pickWrite(chars) { writeChar = w }
-            if let n = pickNotify(chars) { notifyChar = n }
-        } else {
-            if writeChar == nil { writeChar = pickWrite(chars) }
-            if notifyChar == nil { notifyChar = pickNotify(chars) }
-        }
-
-        if let writeChar {
-            writeType = writeChar.properties.contains(.write) ? .withResponse : .withoutResponse
-            isReady = true
-            lastMessage = "Ready."
-        }
         if let notifyChar {
             peripheral.setNotifyValue(true, for: notifyChar)
+        }
+        if writeChar != nil {
+            isReady = true
+            lastMessage = adapter.isSupported
+                ? "Ready."
+                : "\(adapter.displayName) detected — sending isn't supported yet."
+            // Kick off the adapter's handshake, if any.
+            for packet in adapter.onConnect() { sendControl(packet) }
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard let data = characteristic.value,
-              let json = EGoodsProtocol.extractStatusJSON(data) else { return }
-
-        if let space = json["freespace"] as? Int { freeSpaceKB = space }
-
-        // Device-id handshake: echo the badge's `ADD` challenge back once. Never
-        // inject a control write mid-upload (it would corrupt the fragment
-        // stream) — defer it until the current transmit finishes.
-        if !didVerify, let add = json["ADD"], !(add is NSNull) {
-            if let addArray = add as? [Any], addArray.isEmpty { return }
-            if status == .sending {
-                pendingVerify = add
-            } else {
-                sendControl(EGoodsProtocol.deviceIdVerification(ret: add))
-                didVerify = true
-            }
+        guard let data = characteristic.value else { return }
+        let result = adapter.handleNotification(data)
+        if let space = result.freeSpaceKB { freeSpaceKB = space }
+        guard !result.reply.isEmpty else { return }
+        // Never inject a control write mid-upload (it would corrupt the stream) —
+        // defer any handshake reply until the current transmit finishes.
+        if status == .sending {
+            pendingReply.append(contentsOf: result.reply)
+        } else {
+            for packet in result.reply { sendControl(packet) }
         }
     }
 

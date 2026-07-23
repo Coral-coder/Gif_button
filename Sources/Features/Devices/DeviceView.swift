@@ -15,6 +15,14 @@ struct DeviceView: View {
                     if let name = bluetooth.connectedName {
                         LabeledContent("Badge", value: name)
                     }
+                    if let type = bluetooth.detectedBadgeName {
+                        LabeledContent("Protocol", value: type)
+                    }
+                    if bluetooth.detectedBadgeName != nil && !bluetooth.badgeSupported {
+                        Label("Detected, but sending to this badge isn't supported yet.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.footnote).foregroundStyle(.orange)
+                    }
                     if let space = bluetooth.freeSpaceKB {
                         LabeledContent("Free space", value: "\(space) KB")
                     }

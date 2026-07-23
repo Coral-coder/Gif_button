@@ -48,6 +48,7 @@ enum BadgeError: LocalizedError {
     case encodingFailed
     case emptyAnimation
     case busy
+    case badgeUnsupported(String)
 
     var errorDescription: String? {
         switch self {
@@ -56,6 +57,7 @@ enum BadgeError: LocalizedError {
         case .encodingFailed: return "Couldn't encode the image for the badge."
         case .emptyAnimation: return "There were no frames to send."
         case .busy: return "A transfer is already in progress."
+        case .badgeUnsupported(let name): return "\(name) is detected but sending to it isn't supported yet."
         }
     }
 }
