@@ -38,15 +38,3 @@ final class QixAdapter: BadgeAdapter {
     func encode(_ payload: BadgePayload) throws -> [Data] { try QixProtocol.encode(payload) }
     func reset() { QixProtocol.reset() }
 }
-
-/// Qix wire protocol. Filled in from the `com.qix.library` decompile.
-enum QixProtocol {
-    static var isImplemented = false
-
-    static func onConnect() -> [Data] { [] }
-    static func handleNotification(_ data: Data) -> BadgeNotificationResult { BadgeNotificationResult() }
-    static func reset() {}
-    static func encode(_ payload: BadgePayload) throws -> [Data] {
-        throw BadgeError.badgeUnsupported("Qix badge (N88)")
-    }
-}
