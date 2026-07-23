@@ -29,24 +29,15 @@ jobs:
           echo "APK=$APK" >> "$GITHUB_ENV"
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
-          ./jadx/bin/jadx -d jadx-out --no-res "$APK" 2>/dev/null
+          ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
           echo "java files: $(find jadx-out -name '*.java' | wc -l)"
 
-      - name: TREE of nn20 (with sizes)
+      - name: DUMP manager/j.java (BleManager — split builder t())
         run: |
           set +e
-          find jadx-out/sources/com/example/nn20 -name '*.java' -printf '%s\t%p\n' 2>/dev/null | sort -k2
+          echo "@@@@@ j.java @@@@@"; cat jadx-out/sources/com/example/nn20/manager/j.java
 
-      - name: DUMP nn20/bleutils (protocol constants + framing)
+      - name: DUMP activate/version/connect senders (grep)
         run: |
           set +e
-          for f in $(find jadx-out/sources/com/example/nn20/bleutils -name '*.java' 2>/dev/null | sort); do
-            echo "@@@@@ $f @@@@@"; cat "$f"
-          done
-
-      - name: DUMP nn20/manager (BLE manager + send logic)
-        run: |
-          set +e
-          for f in $(find jadx-out/sources/com/example/nn20/manager -name '*.java' 2>/dev/null | sort); do
-            echo "@@@@@ $f @@@@@"; cat "$f"
-          done
+          grep -rn "TYPE_ACTIVATE_QUERY\|TYPE_GET_VERSION\|ActivateQueryBean\|GetVersionBean\|setCharacteristicNotification\|GetPacketSucc\|writeType" jadx-out/sources/com/example/nn20 2>/dev/null | head -60
