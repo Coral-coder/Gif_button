@@ -1,0 +1,50 @@
+name: Analyze Qix
+
+# The N88 badge exposes the Qix service (C2E6FD00-…-BEF9C223DF6A), not Jieli AE00.
+# Decompile ZRun and dump the com.qix.library BLE command protocol + picture/dial
+# upload path. Interop reverse-engineering only; nothing decompiled is committed.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/analyze-qix.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Download + decompile
+        run: |
+          set +e
+          URL='https://data.winudf.com/XAPK/Y29tLnppanVuLnpydW5fMjAyNjA3MTQxNl9hYzY3NDIwMA?_p=Y29tLnppanVuLnpydW4%3D&download_id=1876509444531939&filename=ZRun_2.4.0_APKPure.xapk&full_size=89344935&is_hot=false&k=497d3ade37290e196b5c235b54770e3e6a641d28&package_name=com.zijun.zrun&source=web&token=1784773160-2328deaf1c-0-8c7826852cea2dd476bd414d75bc1ec5'
+          curl -sSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o z.xapk "$URL"
+          mkdir -p xapk && (cd xapk && unzip -oq ../z.xapk)
+          APK=$(ls xapk/*.apk | grep -iE 'zijun|zrun|base' | head -1 || ls xapk/*.apk | head -1)
+          curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
+          mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
+          ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
+      - name: TREE of com/qix/library (with sizes)
+        run: |
+          set +e
+          find jadx-out/sources/com/qix/library -name '*.java' -printf '%s\t%p\n' 2>/dev/null | sort -k2
+      - name: DUMP Qix command framing + CommandCode
+        run: |
+          set +e
+          for n in CommandCode ConstantsUUID BLEBluetooth; do
+            f=$(find jadx-out/sources/com/qix/library -name "$n.java" 2>/dev/null | head -1)
+            [ -n "$f" ] && { echo "@@@@@ $f @@@@@"; cat "$f"; }
+          done
+      - name: DUMP picture / custom-theme / dial upload
+        run: |
+          set +e
+          echo "===== files touching picture/theme/dial send ====="
+          grep -rliE "CustomTheme|customTheme|sendPicture|pushPicture|picture|dial|watchface|BootAnimation|0x|writeData|packet|crc" jadx-out/sources/com/qix/library --include=*.java 2>/dev/null | sort -u | head -30
+          echo "===== dump the command-builder / manager files ====="
+          for f in $(grep -rliE "CommandCode\.|writeCharacteristic|sendData|byte\[\]|createPacket|assemble|crc" jadx-out/sources/com/qix/library/command jadx-out/sources/com/qix/library/bluetooth 2>/dev/null | sort -u | head -8); do
+            echo "@@@@@ $f @@@@@"; sed -n '1,260p' "$f"
+          done
