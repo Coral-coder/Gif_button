@@ -26,3 +26,6 @@ reverse-engineering/artifacts/
 
 # Baked-in API keys — keep secrets out of the repo (copy APIKeys.swift.template)
 Sources/GifProviders/APIKeys.swift
+
+# Decompiled third-party app analysis — never commit (kept locally only)
+reverse-engineering/
