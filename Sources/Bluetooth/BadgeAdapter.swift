@@ -91,7 +91,11 @@ final class EGoodsAdapter: BadgeAdapter {
         return (write, notify, type)
     }
 
-    func onConnect() -> [Data] { [] } // device pushes its status; we reply to it
+    func onConnect() -> [Data] {
+        // Prompt the badge so it sends its status frame (freespace + ADD
+        // challenge). Some units stay silent until queried.
+        [EGoodsProtocol.activationQuery(), EGoodsProtocol.versionQuery()].compactMap { $0 }
+    }
 
     func handleNotification(_ data: Data) -> BadgeNotificationResult {
         var result = BadgeNotificationResult()

@@ -50,6 +50,18 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var isScanning = false
     @Published var lastMessage: String?
     @Published private(set) var uploadProgress: Double = 0
+    /// Rolling debug log (newest last) surfaced on the Badge tab for diagnosing.
+    @Published private(set) var debugLog: [String] = []
+
+    private func dlog(_ s: String) {
+        debugLog.append(s)
+        if debugLog.count > 80 { debugLog.removeFirst(debugLog.count - 80) }
+    }
+
+    private static func hexPreview(_ data: Data, _ maxBytes: Int = 20) -> String {
+        data.prefix(maxBytes).map { String(format: "%02x", $0) }.joined(separator: " ")
+            + (data.count > maxBytes ? " …(\(data.count)B)" : "")
+    }
 
     private let settings: AppSettings
     /// Known badge protocols; the right one is auto-selected on connect.
@@ -158,6 +170,7 @@ final class BluetoothManager: NSObject, ObservableObject {
                 self.uploadProgress = 0
                 self.status = .sending
                 self.sendContinuation = cont
+                self.dlog("TX upload \(packets.count) pkt(s)")
                 self.pump(peripheral, writeChar)
             }
         }
@@ -192,6 +205,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         status = .connected
         uploadProgress = 1
         lastMessage = "Sent."
+        dlog("upload complete (\(sentCount) pkt written)")
         let cont = sendContinuation
         sendContinuation = nil
         cont?.resume()
@@ -356,17 +370,22 @@ extension BluetoothManager: CBPeripheralDelegate {
             lastMessage = adapter.isSupported
                 ? "Ready."
                 : "\(adapter.displayName) detected — sending isn't supported yet."
+            dlog("ready: write=\(writeChar?.uuid.uuidString ?? "?") notify=\(notifyChar?.uuid.uuidString ?? "?") type=\(writeType == .withResponse ? "resp" : "noResp")")
             // Kick off the adapter's handshake, if any.
-            for packet in adapter.onConnect() { sendControl(packet) }
+            let initPackets = adapter.onConnect()
+            if !initPackets.isEmpty { dlog("TX onConnect \(initPackets.count) pkt(s)") }
+            for packet in initPackets { sendControl(packet) }
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
+        dlog("RX \(Self.hexPreview(data))")
         let result = adapter.handleNotification(data)
-        if let space = result.freeSpaceKB { freeSpaceKB = space }
+        if let space = result.freeSpaceKB { freeSpaceKB = space; dlog("freespace=\(space)KB") }
         guard !result.reply.isEmpty else { return }
+        dlog("TX reply \(result.reply.count) pkt(s)")
         // Never inject a control write mid-upload (it would corrupt the stream) —
         // defer any handshake reply until the current transmit finishes.
         if status == .sending {
@@ -380,6 +399,7 @@ extension BluetoothManager: CBPeripheralDelegate {
                     didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
             lastMessage = "Write failed: \(error.localizedDescription)"
+            dlog("write ERR: \(error.localizedDescription)")
             failSend(error)
             return
         }

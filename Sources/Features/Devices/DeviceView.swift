@@ -98,6 +98,18 @@ struct DeviceView: View {
                     }
                     .listRowBackground(GlassRow())
                 }
+
+                if !bluetooth.debugLog.isEmpty {
+                    Section("Debug log (newest first)") {
+                        ForEach(Array(bluetooth.debugLog.suffix(40).reversed().enumerated()), id: \.offset) { item in
+                            Text(item.element)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .listRowBackground(GlassRow())
+                }
             }
             .navigationTitle("Badge")
             .aeroScreen()
