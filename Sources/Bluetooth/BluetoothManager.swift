@@ -328,17 +328,30 @@ extension BluetoothManager: CBPeripheralDelegate {
             services.append(record)
         }
 
-        // Let the detected adapter pick its write/notify characteristics.
-        guard service.uuid == adapter.serviceUUID else { return }
-        let selection = adapter.selectCharacteristics(chars)
-        if let w = selection.write { writeChar = w }
-        if let n = selection.notify { notifyChar = n }
-        writeType = selection.writeType
+        // Prefer the detected adapter's own service for write/notify; but fall
+        // back to ANY writable/notify characteristic so we stay robust to
+        // devices whose characteristics live under a different service.
+        if service.uuid == adapter.serviceUUID {
+            let selection = adapter.selectCharacteristics(chars)
+            if let w = selection.write { writeChar = w; writeType = selection.writeType }
+            if let n = selection.notify { notifyChar = n }
+        } else {
+            if writeChar == nil,
+               let w = chars.first(where: { $0.properties.contains(.write) })
+                    ?? chars.first(where: { $0.properties.contains(.writeWithoutResponse) }) {
+                writeChar = w
+                writeType = w.properties.contains(.write) ? .withResponse : .withoutResponse
+            }
+            if notifyChar == nil {
+                notifyChar = chars.first { $0.properties.contains(.notify) }
+                    ?? chars.first { $0.properties.contains(.indicate) }
+            }
+        }
 
         if let notifyChar {
             peripheral.setNotifyValue(true, for: notifyChar)
         }
-        if writeChar != nil {
+        if writeChar != nil, !isReady {
             isReady = true
             lastMessage = adapter.isSupported
                 ? "Ready."
