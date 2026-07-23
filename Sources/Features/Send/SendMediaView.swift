@@ -124,10 +124,10 @@ struct SendMediaView: View {
                 return (payload, thumb)
             }.value
 
-            // Encode via the auto-detected badge adapter.
-            let packets = try bluetooth.encodePackets(built.payload)
+            // Queue the device-agnostic payload; the connected badge's adapter
+            // encodes it at drain time (so it's always the right protocol).
             let preview = built.thumb.flatMap(UIImage.init(data:))
-            queue.enqueue(SendJob(label: label, preview: preview, packets: packets))
+            queue.enqueue(SendJob(label: label, preview: preview, payload: built.payload))
 
             statusText = bluetooth.isConnected
                 ? "Sending to badge…"

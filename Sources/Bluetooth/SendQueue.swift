@@ -1,14 +1,17 @@
 import Combine
 import UIKit
 
-/// One queued transfer: pre-encoded packets plus a thumbnail and label for the
-/// queue UI. Encoding happens when you tap Send, so a job is ready to fire the
-/// moment the badge connects — even if you queued it while disconnected.
+/// One queued transfer: a device-agnostic payload plus a thumbnail and label for
+/// the queue UI. The payload is encoded to wire packets by the *connected*
+/// badge's adapter at drain time — never before — so a job queued while
+/// disconnected (or before we know which badge we'll talk to) is always encoded
+/// for the protocol the badge actually speaks. This is what lets one queue serve
+/// multiple badge families (DZBJ, BeamBox, …) correctly.
 struct SendJob: Identifiable {
     let id = UUID()
     let label: String
     let preview: UIImage?
-    let packets: [Data]
+    let payload: BadgePayload
 }
 
 /// Holds pending transfers and drains them to the badge one at a time. Survives
@@ -65,17 +68,29 @@ final class SendQueue: ObservableObject {
 
         if settings.clearBeforeSend {
             currentLabel = "Clearing badge…"
-            let blank = EGoodsProtocol.packStillImage(ImageEncoder.black(side: settings.displaySide))
-            try? await bluetooth.transmit(blank)
+            // Encode the blank frame with the CONNECTED badge's adapter (there is
+            // no device-side delete command — "clear" means uploading a black
+            // frame). Never hardcode a protocol here.
+            if let blank = try? bluetooth.encodePackets(.still(ImageEncoder.black(side: settings.displaySide))) {
+                try? await bluetooth.transmit(blank)
+            }
         }
 
         while bluetooth.isConnected, let job = jobs.first {
             currentLabel = job.label
             do {
-                try await bluetooth.transmit(job.packets)
+                // Encode now, via the auto-detected adapter for the badge we're
+                // actually connected to.
+                let packets = try bluetooth.encodePackets(job.payload)
+                try await bluetooth.transmit(packets)
                 jobs.removeFirst()
+            } catch let error as BadgeError {
+                // Unsupported badge / encoding problem: surface it and stop so we
+                // don't spin. Remaining jobs stay queued for a supported badge.
+                bluetooth.lastMessage = error.errorDescription
+                break
             } catch {
-                // Leave this and remaining jobs queued; retry on reconnect.
+                // Transient (e.g. disconnect mid-send): leave queued, retry later.
                 break
             }
         }
