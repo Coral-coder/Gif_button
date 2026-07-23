@@ -231,12 +231,21 @@ frame (`"frame_%05d."` 1-based name + offset), then each frame's 32-byte
 sub-header + JPEG packed **contiguously with no padding** (e-Goods 4-byte-aligns
 each frame). Last frame's "next" offset loops back to the first.
 
-## Transport
+## Transport (implemented)
 
-The stock app streams fragments with a **windowed per-packet ACK** scheme (the
-badge acks with JSON containing `"GetPacketSuccess"` / `"GetPacketFail"`, sent in
-batches with a warm-up delay). This port instead relies on
-write-without-response flow control (`canSendWriteWithoutResponse`) plus
-MTU-sized fragments. If a unit proves to need explicit ACK pacing, add it in
-`BeamBoxProtocol.handleNotification`. No `ADD` challenge is used (BeamBox's
-status JSON has `freespace`/`allspace` but no challenge field).
+BeamBox needs a **windowed, per-packet-acked** upload — a free-running
+write-without-response stream overruns its receive buffer and the whole transfer
+is silently dropped (the "it writes but nothing arrives" symptom). Replicated
+from the stock BleManager (`manager/j.java`) in
+`BluetoothManager`'s windowed sender via `BadgeTransportMode.windowedAck`:
+
+- Send a window of **8** fragments, **10 ms** apart.
+- The badge acks **each** received packet with a notification whose JSON
+  contains `"GetPacketSuccess"` (or `"GetPacketFail"` to reject the batch).
+- Wait for all 8 acks, then send the next window after **30 ms**.
+- On a `GetPacketFail` or a `(10·N)+2500 ms` timeout, resend the batch from its
+  start, up to **3×**, backing the inter-batch gap off to 80 then 120 ms.
+
+No `ADD` challenge is used (BeamBox's status JSON has `freespace`/`allspace` but
+no challenge field). Fragments are also MTU-sized (see BadgeTransport) so no
+single frame exceeds the negotiated write length.
