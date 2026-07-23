@@ -48,17 +48,47 @@ protocol BadgeAdapter: AnyObject {
 // MARK: - Registry / detection
 
 enum BadgeRegistry {
-    /// Order matters: first match wins. e-Goods is the default fallback.
+    /// Order matters: first service match wins.
     static func makeAdapters() -> [BadgeAdapter] {
-        [EGoodsAdapter(), AuraCastAdapter()]
+        [BeamBoxAdapter(), EGoodsAdapter(), AuraCastAdapter()]
     }
 
-    /// Any name prefix used to flag "this looks like a badge" while scanning.
-    static let scanNamePrefixes = ["DZBJ-"]
+    /// Name prefixes that flag "this looks like a badge" while scanning.
+    static let scanNamePrefixes = ["DZBJ-", "BEAM", "BB-", "E87", "L8"]
 
+    /// Strictly service-based: pick the adapter whose service the device
+    /// advertises. If nothing matches, return an Unknown adapter (connects but
+    /// won't send) rather than guessing a protocol.
     static func detect(name: String?, serviceUUIDs: [CBUUID], from adapters: [BadgeAdapter]) -> BadgeAdapter {
-        adapters.first { $0.matches(name: name, serviceUUIDs: serviceUUIDs) } ?? adapters[0]
+        adapters.first { $0.matches(name: name, serviceUUIDs: serviceUUIDs) } ?? UnknownAdapter()
     }
+}
+
+/// Connects to any device (property-based char selection) but can't send — used
+/// when no known protocol matches, so we never mislabel a badge.
+final class UnknownAdapter: BadgeAdapter {
+    let id = "unknown"
+    let displayName = "Unknown badge"
+    let serviceUUID = CBUUID(string: "00000000-0000-0000-0000-000000000000")
+    let isSupported = false
+
+    func matches(name: String?, serviceUUIDs: [CBUUID]) -> Bool { false }
+
+    func selectCharacteristics(_ chars: [CBCharacteristic])
+        -> (write: CBCharacteristic?, notify: CBCharacteristic?, writeType: CBCharacteristicWriteType) {
+        let write = chars.first { $0.properties.contains(.write) }
+            ?? chars.first { $0.properties.contains(.writeWithoutResponse) }
+        let notify = chars.first { $0.properties.contains(.notify) }
+            ?? chars.first { $0.properties.contains(.indicate) }
+        let type: CBCharacteristicWriteType =
+            (write?.properties.contains(.write) ?? false) ? .withResponse : .withoutResponse
+        return (write, notify, type)
+    }
+
+    func onConnect() -> [Data] { [] }
+    func handleNotification(_ data: Data) -> BadgeNotificationResult { BadgeNotificationResult() }
+    func encode(_ payload: BadgePayload) throws -> [Data] { throw BadgeError.badgeUnsupported(displayName) }
+    func reset() {}
 }
 
 // MARK: - e-Goods (DZBJ) adapter — fully implemented
@@ -73,9 +103,8 @@ final class EGoodsAdapter: BadgeAdapter {
     private var didVerify = false
 
     func matches(name: String?, serviceUUIDs: [CBUUID]) -> Bool {
-        if serviceUUIDs.contains(serviceUUID) { return true }
-        if let name, name.uppercased().hasPrefix(descriptor.namePrefix.uppercased()) { return true }
-        return false
+        // Service-based only — names collide across badge families.
+        serviceUUIDs.contains(serviceUUID)
     }
 
     func selectCharacteristics(_ chars: [CBCharacteristic])
