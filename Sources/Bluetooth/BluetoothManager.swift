@@ -73,7 +73,8 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var writeType: CBCharacteristicWriteType = .withResponse
     private var notifyChar: CBCharacteristic?
     private var pendingReply: [Data] = []
-    private var autoConnectTarget: UUID?
+    /// Known badges to auto-reconnect to on sight (so you can move between them).
+    private var autoConnectSet: Set<UUID> = []
     private var suppressAutoConnect = false
 
     private var outgoing: [Data] = []
@@ -103,6 +104,24 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var pacedTotal = 0
 
     private let lastDeviceKey = "lastDeviceID"
+    private let knownDevicesKey = "knownBadgeIDs"
+
+    /// Every badge we've successfully connected to (for multi-badge auto-connect).
+    private var knownBadgeIDs: Set<UUID> {
+        Set((UserDefaults.standard.stringArray(forKey: knownDevicesKey) ?? [])
+            .compactMap(UUID.init(uuidString:)))
+    }
+
+    /// Record a badge so we'll auto-reconnect to it whenever it's in range. The
+    /// most recent one is also stored as the priority (fast-path) device.
+    private func rememberBadge(_ id: UUID) {
+        var arr = UserDefaults.standard.stringArray(forKey: knownDevicesKey) ?? []
+        if !arr.contains(id.uuidString) {
+            arr.append(id.uuidString)
+            UserDefaults.standard.set(arr, forKey: knownDevicesKey)
+        }
+        UserDefaults.standard.set(id.uuidString, forKey: lastDeviceKey)
+    }
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -139,38 +158,48 @@ final class BluetoothManager: NSObject, ObservableObject {
         suppressAutoConnect = false
         peripheral = device.peripheral
         device.peripheral.delegate = self
-        UserDefaults.standard.set(device.peripheral.identifier.uuidString, forKey: lastDeviceKey)
+        // Remembering happens on a *successful* connection (see isReady), so we
+        // never auto-reconnect to something that wasn't actually a usable badge.
         central.connect(device.peripheral, options: nil)
     }
 
     func disconnect() {
-        autoConnectTarget = nil
+        autoConnectSet = []
         suppressAutoConnect = true // don't immediately reconnect on an intentional disconnect
         guard let peripheral else { return }
         central.cancelPeripheralConnection(peripheral)
     }
 
-    /// Forget the saved device so we stop auto-reconnecting to it.
+    /// Forget the current badge so we stop auto-reconnecting to it (others stay).
     func forgetDevice() {
+        if let id = peripheral?.identifier {
+            var arr = UserDefaults.standard.stringArray(forKey: knownDevicesKey) ?? []
+            arr.removeAll { $0 == id.uuidString }
+            UserDefaults.standard.set(arr, forKey: knownDevicesKey)
+        }
         UserDefaults.standard.removeObject(forKey: lastDeviceKey)
-        autoConnectTarget = nil
+        autoConnectSet = []
     }
 
+    /// Auto-connect to ANY badge we've used before, as soon as it's in range —
+    /// so moving between badges just works. Prefers the most recently used one.
     private func attemptAutoConnect() {
-        guard settings.autoConnect, !isConnected, status != .connecting,
-              let idString = UserDefaults.standard.string(forKey: lastDeviceKey),
-              let uuid = UUID(uuidString: idString) else { return }
+        guard settings.autoConnect, !isConnected, status != .connecting else { return }
+        let known = knownBadgeIDs
+        guard !known.isEmpty else { return }
 
-        // Fast path: retrieve the known peripheral and connect directly.
-        if let known = central.retrievePeripherals(withIdentifiers: [uuid]).first {
-            let device = DiscoveredDevice(peripheral: known,
-                                          name: known.name ?? "Badge",
-                                          rssi: 0, isBadge: true)
-            connect(device)
+        // Fast path: if the most-recent badge is already known to the system and
+        // reachable, connect straight to it without scanning.
+        if let idString = UserDefaults.standard.string(forKey: lastDeviceKey),
+           let last = UUID(uuidString: idString),
+           let peripheral = central.retrievePeripherals(withIdentifiers: [last]).first,
+           peripheral.state != .disconnected {
+            connect(DiscoveredDevice(peripheral: peripheral, name: peripheral.name ?? "Badge",
+                                     rssi: 0, isBadge: true))
             return
         }
-        // Fallback: scan and connect when the saved device appears.
-        autoConnectTarget = uuid
+        // Otherwise scan and connect to whichever known badge appears first.
+        autoConnectSet = known
         startScan()
     }
 
@@ -451,9 +480,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
         }
         discovered.sort { ($0.isBadge ? 1 : 0, $0.rssi) > ($1.isBadge ? 1 : 0, $1.rssi) }
 
-        // Auto-connect when the saved device shows up.
-        if let target = autoConnectTarget, peripheral.identifier == target {
-            autoConnectTarget = nil
+        // Auto-connect to any known badge as soon as it appears in range.
+        if autoConnectSet.contains(peripheral.identifier) {
+            autoConnectSet = []
             connect(device)
         }
     }
@@ -557,6 +586,9 @@ extension BluetoothManager: CBPeripheralDelegate {
             BadgeTransport.maxDataLen = BadgeTransport.dataLen(forMaxWrite: maxWrite)
             dlog("maxWrite=\(maxWrite)B → fragment payload=\(BadgeTransport.maxDataLen)B")
             isReady = true
+            // Now that it's a confirmed, usable badge, remember it so we'll
+            // auto-reconnect whenever it's in range (multi-badge support).
+            rememberBadge(peripheral.identifier)
             lastMessage = adapter.isSupported
                 ? "Ready."
                 : "\(adapter.displayName) detected — sending isn't supported yet."
