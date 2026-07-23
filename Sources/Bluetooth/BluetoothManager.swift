@@ -103,10 +103,26 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var pacedPacketDelayMs = 12
     private var pacedTotal = 0
 
-    // Jieli (AE00: E87/L8/N88) interactive request/response upload session.
+    // Jieli (AE00: E87/L8) interactive request/response upload session.
     private var jieliUploader: JieliUploader?
-    /// True when the connected badge uses the interactive Jieli upload path.
-    var usesInteractiveUpload: Bool { adapter is AuraCastAdapter }
+    // Qix (C2E6FD: N88) interactive dial-push upload session.
+    private var qixUploader: QixUploader?
+    /// Frame fragments queued for the Qix write characteristic (one logical frame
+    /// is fragmented to the negotiated write length; the device reassembles them).
+    private var qixFrags: [Data] = []
+    /// The N88's picture size, learned from its badge-info response (falls back to
+    /// a square default until then). Drives the dial image dimensions.
+    private var qixPictureSize: (w: Int, h: Int) = (240, 240)
+
+    /// True when the connected badge uses an interactive request/response upload
+    /// (Jieli or Qix) rather than the one-shot DZBJ/BeamBox stream.
+    var usesInteractiveUpload: Bool { adapter is AuraCastAdapter || adapter is QixAdapter }
+    /// True for the Jieli (AE00) interactive path specifically.
+    var usesJieliUpload: Bool { adapter is AuraCastAdapter }
+    /// True for the Qix (C2E6FD, N88) interactive dial-push path specifically.
+    var usesQixUpload: Bool { adapter is QixAdapter }
+    /// Current N88 picture dimensions (for building the dial image).
+    var qixImageSize: (w: Int, h: Int) { qixPictureSize }
 
     private let lastDeviceKey = "lastDeviceID"
     private let knownDevicesKey = "knownBadgeIDs"
@@ -482,6 +498,80 @@ final class BluetoothManager: NSObject, ObservableObject {
         }
     }
 
+    /// Interactive Qix (C2E6FD, N88) upload: build the dial file from an RGB565
+    /// (little-endian) image and stream it via the UpdateManager-style dial-push
+    /// sequence. All state runs on the main queue (where the CB delegate + uploader
+    /// also run). Each logical frame is fragmented to the negotiated write length.
+    func uploadQixDial(rgb565: [UInt8], width: Int, height: Int) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            DispatchQueue.main.async {
+                guard self.isConnected, self.peripheral != nil, self.writeChar != nil else {
+                    cont.resume(throwing: BadgeError.notConnected); return
+                }
+                guard self.qixUploader == nil, self.jieliUploader == nil, self.status != .sending else {
+                    cont.resume(throwing: BadgeError.busy); return
+                }
+                let dial = QixProtocol.buildDialFile(rgb565BE: rgb565, w: width, h: height)
+                self.status = .sending
+                self.uploadProgress = 0
+                self.qixFrags = []
+                self.dlog("TX Qix dial upload (\(width)×\(height), blob \(dial.count)B)")
+                var resumed = false
+
+                let uploader = QixUploader(
+                    send: { [weak self] frame in self?.qixEnqueueFrame(frame) },
+                    dlog: { [weak self] s in self?.dlog(s) },
+                    onProgress: { [weak self] p in self?.uploadProgress = p },
+                    onFinish: { [weak self] result in
+                        guard let self else { return }
+                        self.qixUploader = nil
+                        self.qixFrags = []
+                        self.status = self.isConnected ? .connected : .disconnected
+                        switch result {
+                        case .success:
+                            self.uploadProgress = 1
+                            self.lastMessage = "Sent."
+                            if !resumed { resumed = true; cont.resume() }
+                        case .failure(let error):
+                            self.lastMessage = (error as? BadgeError)?.errorDescription ?? "Upload failed."
+                            if !resumed { resumed = true; cont.resume(throwing: error) }
+                        }
+                    })
+                self.qixUploader = uploader
+                uploader.start(dialFile: dial)
+            }
+        }
+    }
+
+    /// Fragment a logical Qix frame to the negotiated write length and queue it for
+    /// the write characteristic. The device reassembles fragments by concatenation.
+    private func qixEnqueueFrame(_ frame: Data) {
+        guard let peripheral, let writeChar else { return }
+        let maxWrite = max(20, peripheral.maximumWriteValueLength(for: writeType))
+        var i = 0
+        while i < frame.count {
+            let end = min(i + maxWrite, frame.count)
+            qixFrags.append(frame.subdata(in: i..<end))
+            i = end
+        }
+        qixDrain(peripheral, writeChar)
+    }
+
+    /// Drain queued Qix fragments. Write-without-response is gated on the BLE
+    /// buffer (resumes in `peripheralIsReady`); write-with-response advances one
+    /// fragment per `didWrite` callback.
+    private func qixDrain(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
+        if writeType == .withoutResponse {
+            while !qixFrags.isEmpty {
+                guard peripheral.canSendWriteWithoutResponse else { return }
+                peripheral.writeValue(qixFrags.removeFirst(), for: characteristic, type: .withoutResponse)
+            }
+        } else if !qixFrags.isEmpty {
+            peripheral.writeValue(qixFrags.removeFirst(), for: characteristic, type: .withResponse)
+            // Next fragment on didWriteValueFor.
+        }
+    }
+
     private func failSend(_ error: Error) {
         outgoing.removeAll()
         winGeneration &+= 1            // invalidate any pending windowed/paced timers
@@ -577,6 +667,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
         services = []
         jieliUploader?.cancel()
         jieliUploader = nil
+        qixUploader?.cancel()
+        qixUploader = nil
+        qixFrags = []
         if sendContinuation != nil { failSend(BadgeError.notConnected) }
         if suppressAutoConnect {
             suppressAutoConnect = false
@@ -665,8 +758,9 @@ extension BluetoothManager: CBPeripheralDelegate {
         guard let data = characteristic.value else { return }
         dlog("RX \(Self.hexPreview(data))")
 
-        // Jieli interactive upload: feed responses to the running session.
+        // Interactive uploads: feed responses to the running session.
         jieliUploader?.handleNotification(data)
+        qixUploader?.handleNotification(data)
 
         // Windowed-ack transport: advance the upload when the badge acks packets.
         if usingWindowedAck, status == .sending {
@@ -692,15 +786,19 @@ extension BluetoothManager: CBPeripheralDelegate {
         if let error {
             lastMessage = "Write failed: \(error.localizedDescription)"
             dlog("write ERR: \(error.localizedDescription)")
+            if qixUploader != nil { qixUploader?.cancel(); return }
             failSend(error)
             return
         }
+        // Qix interactive upload drives its own fragment queue.
+        if qixUploader != nil { qixDrain(peripheral, characteristic); return }
         guard status == .sending, writeType == .withResponse else { return }
         bumpProgress()
         pump(peripheral, characteristic)
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        if qixUploader != nil, let writeChar { qixDrain(peripheral, writeChar); return }
         guard status == .sending, let writeChar else { return }
         if usingPacedStream {
             if pacedWaitingForReady {

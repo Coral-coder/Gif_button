@@ -25,34 +25,13 @@ jobs:
           curl -sSL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
           mkdir -p jadx && (cd jadx && unzip -oq ../jadx.zip)
           ./jadx/bin/jadx --show-bad-code -d jadx-out --no-res "$APK" 2>/dev/null
-      - name: TypeConversion + ImageCacheUtils byte order (short/int/bytes2Int)
-        run: |
-          set +e
-          f=$(find jadx-out/sources -path '*qix*TypeConversion.java' | head -1)
-          echo "@@@@@ $f @@@@@"
-          for m in shortToByteArray bytes2Int bytes2Short intToBytes bytes2Chars; do
-            echo "--- $m ---"
-            [ -f "$f" ] && sed -n "/$m/,/^    }/p" "$f" | head -18
-          done
-          g=$(find jadx-out/sources -path '*qix*ImageCacheUtils.java' | head -1)
-          echo "@@@@@ $g (shortToByteArray if local) @@@@@"
-          [ -f "$g" ] && sed -n '/shortToByteArray/,/^    }/p' "$g" | head -18
-      - name: Badge-info request + response parse (0xC6/0xC7 -> pictureWidth/Heigh)
+      - name: badgeInfoReturnParse exact body (byte offsets for w/h/pic)
         run: |
           set +e
           f=$(find jadx-out/sources -path '*qix*ReceiveCommandParse.java' | head -1)
-          echo "@@@@@ badgeInfo parse @@@@@"
-          [ -f "$f" ] && sed -n '/BadgeInfoReturn/,/return/p' "$f" | head -60
-          echo "--- grep badge-info offsets ---"
-          [ -f "$f" ] && grep -nE "BadgeInfoReturn|setPictureWidth|setPictureHeigh|setWidth|setHeight|setMemory|REP_BADGE|REQ_BADGE" "$f" | head -30
-          c=$(find jadx-out/sources -path '*qix*BTCommandManager.java' | head -1)
-          echo "--- badge-info request cmd ---"
-          [ -f "$c" ] && grep -nE "BADGE_INFO|badgeInfo|BadgeInfo|REP_BADGE|REQ_BADGE" "$c" | head -10
-          [ -f "$c" ] && sed -n '/badgeInfo/,/^    }/p' "$c" | head -20
-      - name: How the badge picture size feeds the dial push (mo/ + Qix wrapper)
-        run: |
-          set +e
-          grep -rnE "getPictureWidth|getPictureHeigh|BadgeInfoReturn|onReturnBadgeInfo|pictureWidth|pictureHeigh|getDialWide|getDialHigh" jadx-out/sources/mo jadx-out/sources/qn --include=*.java 2>/dev/null | head -30
-          echo "--- IReceiveListener badge-info callback ---"
-          l=$(find jadx-out/sources -path '*qix*IReceiveListener.java' | head -1)
-          [ -f "$l" ] && grep -nE "Badge|Picture|badge|picture" "$l" | head -20
+          echo "@@@@@ badgeInfoReturnParse @@@@@"
+          [ -f "$f" ] && sed -n '195,212p' "$f"
+          echo "--- which opcode dispatches to it (REP_BADGE_INFO = -57 = 0xC7) ---"
+          [ -f "$f" ] && grep -n "badgeInfoReturnParse\|REP_BADGE\|-57\|199" "$f" | head -10
+          echo "--- dispatch context ---"
+          [ -f "$f" ] && grep -n "badgeInfoReturnParse" "$f" | tail -1

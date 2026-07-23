@@ -22,7 +22,7 @@ import Foundation
 /// so, rather than sending packets that won't work.
 final class AuraCastAdapter: BadgeAdapter {
     let id = "jieli-ae00"
-    let displayName = "Jieli badge (E87/L8/N88)"
+    let displayName = "Jieli badge (E87/L8)"
     let serviceUUID = CBUUID(string: "0000AE00-0000-1000-8000-00805F9B34FB")
     // Auth + the interactive custom-dial-bg upload (JieliRCSP / JieliUploader) are
     // implemented; the BluetoothManager routes Jieli sends through that

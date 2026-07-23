@@ -6,7 +6,7 @@ import Foundation
 /// (RGB565). Byte-exact from the decompile; the big-blob streaming orchestration
 /// is finalized in QixUploader.
 enum QixProtocol {
-    static var isImplemented = false
+    static var isImplemented = true
 
     // MARK: CommandCode (com.qix.library.command.CommandCode)
     static let commandMark: UInt8 = 0x9E          // -98, frame head

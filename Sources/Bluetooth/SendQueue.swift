@@ -88,8 +88,15 @@ final class SendQueue: ObservableObject {
         while bluetooth.isConnected, let job = jobs.first {
             currentLabel = job.label
             do {
-                if bluetooth.usesInteractiveUpload {
-                    // Jieli (AE00: E87/L8/N88) — interactive custom-dial-bg upload.
+                if bluetooth.usesQixUpload {
+                    // Qix (C2E6FD, N88) — interactive dial-push. The badge wants a
+                    // dial file built from an RGB565 image at its picture size.
+                    let jpeg = Self.firstImageJPEG(job.payload)
+                    let size = bluetooth.qixImageSize
+                    let bytes = ImageEncoder.rgb565BE(fromJPEG: jpeg, width: size.w, height: size.h)
+                    try await bluetooth.uploadQixDial(rgb565: bytes, width: size.w, height: size.h)
+                } else if bluetooth.usesJieliUpload {
+                    // Jieli (AE00: E87/L8) — interactive custom-dial-bg upload.
                     // The badge wants raw pixels; convert the payload's image to
                     // an RGB565 background (side confirmed on-device; 240 default).
                     let jpeg = Self.firstImageJPEG(job.payload)
