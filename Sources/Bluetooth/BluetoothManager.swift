@@ -103,6 +103,11 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var pacedPacketDelayMs = 12
     private var pacedTotal = 0
 
+    // Jieli (AE00: E87/L8/N88) interactive request/response upload session.
+    private var jieliUploader: JieliUploader?
+    /// True when the connected badge uses the interactive Jieli upload path.
+    var usesInteractiveUpload: Bool { adapter is AuraCastAdapter }
+
     private let lastDeviceKey = "lastDeviceID"
     private let knownDevicesKey = "knownBadgeIDs"
 
@@ -424,6 +429,40 @@ final class BluetoothManager: NSObject, ObservableObject {
         try adapter.encode(payload)
     }
 
+    /// Interactive Jieli (AE00) upload: push `bgBytes` as a custom dial background
+    /// via the RCSP request/response sequence. Separate from `transmit` so the
+    /// one-shot DZBJ/BeamBox paths are untouched.
+    @MainActor
+    func uploadJieliBytes(_ bgBytes: [UInt8]) async throws {
+        guard isConnected, let peripheral, let writeChar else { throw BadgeError.notConnected }
+        guard (adapter as? AuraCastAdapter)?.authenticated == true else {
+            throw BadgeError.badgeUnsupported("Jieli badge not authenticated yet — reconnect and retry")
+        }
+        guard jieliUploader == nil, status != .sending else { throw BadgeError.busy }
+
+        let wType = writeType
+        let maxWrite = peripheral.maximumWriteValueLength(for: wType)
+        let uploader = JieliUploader(
+            maxWrite: maxWrite,
+            send: { [weak self] data in
+                guard let self, let p = self.peripheral, let w = self.writeChar else { return }
+                p.writeValue(data, for: w, type: wType)
+            },
+            dlog: { [weak self] s in self?.dlog(s) })
+        jieliUploader = uploader
+        status = .sending
+        uploadProgress = 0
+        defer {
+            jieliUploader = nil
+            status = isConnected ? .connected : .disconnected
+        }
+        try await uploader.upload(bgBytes: bgBytes, progress: { [weak self] p in
+            self?.uploadProgress = p
+        })
+        uploadProgress = 1
+        lastMessage = "Sent."
+    }
+
     private func failSend(_ error: Error) {
         outgoing.removeAll()
         winGeneration &+= 1            // invalidate any pending windowed/paced timers
@@ -517,6 +556,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
         adapters.forEach { $0.reset() }
         isReady = false
         services = []
+        jieliUploader?.cancel()
+        jieliUploader = nil
         if sendContinuation != nil { failSend(BadgeError.notConnected) }
         if suppressAutoConnect {
             suppressAutoConnect = false
@@ -604,6 +645,9 @@ extension BluetoothManager: CBPeripheralDelegate {
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
         dlog("RX \(Self.hexPreview(data))")
+
+        // Jieli interactive upload: feed responses to the running session.
+        jieliUploader?.handleNotification(data)
 
         // Windowed-ack transport: advance the upload when the badge acks packets.
         if usingWindowedAck, status == .sending {

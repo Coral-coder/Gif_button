@@ -313,8 +313,30 @@ RCSP command/transport layer *and* the `jl_fatfs` FAT-filesystem client — plus
 native CRC-16 and the dial-resource image format. This is a filesystem-over-BLE
 reimplementation, not a frame protocol.
 
-Status: auth is ported + verified; the upload path and its command opcodes are
-fully mapped (above). But faithfully reimplementing RCSP + `jl_fatfs` is a large,
-multi-component SDK port that cannot be validated without the N88 in hand — a
-materially different and larger undertaking than the self-contained DZBJ / BeamBox
-badge protocols, which were single-file transcriptions.
+## Implemented (pending on-device validation)
+
+The full path is now built — it turned out the client does NOT need to reimplement
+`jl_fatfs`: the firmware handles the FAT, and the client just writes at file
+offsets via `ExternalFlashIOCtrl`. Implemented in `JieliRCSP.swift` (framing +
+commands, byte-exact) and `JieliUploader.swift` (the interactive session):
+
+- **Wire frame** (byte-exact from `ParseHelper.packSendBasePacket`):
+  `[FE DC BA][flags][opCode][paramLen:2 BE][opCodeSn][paramData…][EF]`,
+  `flags = 0x80 | (needResponse ? 0x40 : 0)`, `paramLen = 1 + paramData.len`,
+  **no frame CRC**.
+- **Param bodies** (byte-exact): `[op][flag][payload]`; CreateFile
+  `[02][flag][size4][path]`, WriteData `[00][flag][offset4][data]`,
+  QueryWriteResult `[08][flag][crc2]`, DialAction `[03][action][path]`.
+- **Sequence**: getFreeSpace → enableCustomDialBg → createFileStart →
+  loop[writeData → queryWriteResult] → createFileStop → setUsingDial, each a
+  request/response step logged to the on-device debug log.
+
+Three things still need confirming **on the N88** (each is a focused, one-round
+fix once the debug log shows where it lands):
+1. the CRC-16 variant used by QueryWriteResult (currently CRC-16/CCITT-FALSE),
+2. the custom-bg **image format** (currently 240² RGB565) + screen size,
+3. the exact dial/file **paths** (currently `/null` + `/BGP/CUSTOM.BGP`).
+
+The auth handshake + framing + command sequence are transcribed verbatim; the
+debug log will show the first step the badge rejects (with its status byte), which
+pinpoints any of the three above.

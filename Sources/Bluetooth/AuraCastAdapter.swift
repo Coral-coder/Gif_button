@@ -24,9 +24,10 @@ final class AuraCastAdapter: BadgeAdapter {
     let id = "jieli-ae00"
     let displayName = "Jieli badge (E87/L8/N88)"
     let serviceUUID = CBUUID(string: "0000AE00-0000-1000-8000-00805F9B34FB")
-    // Auth is ported; the custom-dial-bg upload (Jieli RCSP external-flash file
-    // transfer) is mapped in docs/PROTOCOL.md but not yet implemented/verified.
-    let isSupported = false
+    // Auth + the interactive custom-dial-bg upload (JieliRCSP / JieliUploader) are
+    // implemented; the BluetoothManager routes Jieli sends through that
+    // interactive path instead of the one-shot `encode`. Not hardware-validated.
+    let isSupported = true
 
     private let writeUUID = CBUUID(string: "0000AE01-0000-1000-8000-00805F9B34FB")   // WriteNoResponse
     private let notifyUUID = CBUUID(string: "0000AE02-0000-1000-8000-00805F9B34FB")

@@ -57,6 +57,15 @@ final class SendQueue: ObservableObject {
         jobs.removeAll()
     }
 
+    /// The representative still JPEG for a payload (first frame for animations) —
+    /// used by badges that take a single background image (Jieli custom dial bg).
+    private static func firstImageJPEG(_ payload: BadgePayload) -> Data {
+        switch payload {
+        case .still(let image): return image.jpeg
+        case .animation(let anim): return anim.frames.first?.jpeg ?? Data()
+        }
+    }
+
     func drainIfPossible() {
         guard !isDraining, bluetooth.isConnected, !jobs.isEmpty else { return }
         Task { await drain() }
@@ -79,10 +88,19 @@ final class SendQueue: ObservableObject {
         while bluetooth.isConnected, let job = jobs.first {
             currentLabel = job.label
             do {
-                // Encode now, via the auto-detected adapter for the badge we're
-                // actually connected to.
-                let packets = try bluetooth.encodePackets(job.payload)
-                try await bluetooth.transmit(packets)
+                if bluetooth.usesInteractiveUpload {
+                    // Jieli (AE00: E87/L8/N88) — interactive custom-dial-bg upload.
+                    // The badge wants raw pixels; convert the payload's image to
+                    // an RGB565 background (side confirmed on-device; 240 default).
+                    let jpeg = Self.firstImageJPEG(job.payload)
+                    let bytes = ImageEncoder.rgb565(fromJPEG: jpeg, side: 240)
+                    try await bluetooth.uploadJieliBytes(bytes)
+                } else {
+                    // Encode now, via the auto-detected adapter for the badge we're
+                    // actually connected to.
+                    let packets = try bluetooth.encodePackets(job.payload)
+                    try await bluetooth.transmit(packets)
+                }
                 jobs.removeFirst()
             } catch let error as BadgeError {
                 // Unsupported badge / encoding problem: surface it and stop so we
